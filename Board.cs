@@ -22,7 +22,8 @@ namespace ChessGame
             return _cells[position.Row, position.Column];
         }
 
-        public void RemovePiece(Position position) {
+        public void RemovePiece(Position position)
+        {
             _cells[position.Row, position.Column] = null;
         }
 
@@ -99,7 +100,8 @@ namespace ChessGame
             }
         }
 
-        public bool IsCellFree(Position position) {
+        public bool IsCellFree(Position position)
+        {
             return _cells[position.Row, position.Column] == null;
         }
 
@@ -199,6 +201,23 @@ namespace ChessGame
             AddPiece(piece);
 
             return state;
+        }
+
+        internal MoveState MoveCastle(Move move, CastleInfo castleInfo)
+        {
+            MoveState kingState = MovePiece(move);
+            MoveState rookState = MovePiece(
+                new Move(
+                    castleInfo.RookFrom,
+                    castleInfo.RookTo));
+
+            return kingState with
+            {
+                SecondaryPiece = rookState.Piece,
+                SecondaryFrom = rookState.From,
+                SecondaryTo = rookState.To,
+                SecondaryPreviousMoveCount = rookState.PreviousMoveCount,
+            };
         }
     }
 }

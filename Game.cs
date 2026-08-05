@@ -27,10 +27,18 @@ public class Game
         if (piece.Color != CurrentTurn)
             throw new InvalidOperationException("Сейчас ход другого игрока.");
 
-        if (TryCastle(move))
+        if (IsCastle(move, out CastleInfo castleInfo))
         {
+            MoveState state = _board.MoveCastle(
+                move,
+                castleInfo);
+
+            _history.Push(state);
+
             LastMove = move;
+
             SwitchTurnAndCheckState();
+
             return;
         }
 
@@ -184,8 +192,10 @@ public class Game
         }
     }
 
-    private bool TryCastle(Move move)
+    private bool IsCastle(Move move, out CastleInfo castleInfo)
     {
+        castleInfo = default;
+
         ChessPiece? king = _board.GetPiece(move.From);
 
         if (king is not King)
@@ -202,17 +212,22 @@ public class Game
         bool kingSide = deltaColumn > 0;
 
         int row = move.From.Row;
-        int rookColumn = kingSide ? 7 : 0;
-        Position rookPosition = new(row, rookColumn);
 
-        ChessPiece? rook = _board.GetPiece(rookPosition);
+        int rookColumn = kingSide ? 7 : 0;
+
+        Position rookFrom = new(row, rookColumn);
+
+        ChessPiece? rook = _board.GetPiece(rookFrom);
 
         if (rook is not Rook || rook.MoveCount != 0)
             return false;
 
-        // Клетки между королём и ладьёй должны быть пусты.
         int step = kingSide ? 1 : -1;
-        for (int col = move.From.Column + step; col != rookColumn; col += step)
+
+        for (
+            int col = move.From.Column + step;
+            col != rookColumn;
+            col += step)
         {
             if (_board.GetPiece(new Position(row, col)) != null)
                 return false;
@@ -224,19 +239,20 @@ public class Game
             ? [move.From, new Position(row, move.From.Column + 1), move.To]
             : [move.From, new Position(row, move.From.Column - 1), move.To];
 
+
         foreach (Position square in pathSquares)
         {
             if (IsSquareAttacked(square, king.Color))
                 return false;
         }
 
-        _board.MovePiece(move);
-
         Position rookTo = kingSide
-            ? new Position(row, move.To.Column - 1)
-            : new Position(row, move.To.Column + 1);
+            ? new(row, move.To.Column - 1)
+            : new(row, move.To.Column + 1);
 
-        _board.MovePiece(new Move(rookPosition, rookTo));
+        castleInfo = new CastleInfo(
+            rookFrom,
+            rookTo);
 
         return true;
     }
