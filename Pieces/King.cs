@@ -1,6 +1,7 @@
-﻿using ChessGame.Model;
-using ChessGame.Movement;
-namespace ChessGame.Pieces
+﻿using ChessGame.Core.Model;
+using ChessGame.Core.Movement;
+
+namespace ChessGame.Core.Pieces
 {
     public class King : ChessPiece
     {

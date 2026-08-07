@@ -1,7 +1,7 @@
-﻿using ChessGame.Model;
-using ChessGame.Pieces;
+﻿using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
 
-namespace ChessGame
+namespace ChessGame.Core
 {
     public class Board
     {
@@ -40,8 +40,14 @@ namespace ChessGame
                 Piece = piece,
                 From = move.From,
                 To = move.To,
+
+                PreviousMoveCount = piece.MoveCount,
+
                 CapturedPiece = capturedPiece,
-                PreviousMoveCount = piece.MoveCount
+
+                CapturedPiecePosition = capturedPiece?.Position ?? default,
+
+                CapturedPiecePreviousMoveCount = capturedPiece?.MoveCount ?? 0
             };
 
             if (capturedPiece != null)

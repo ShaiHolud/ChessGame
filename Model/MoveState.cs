@@ -1,6 +1,6 @@
-﻿using ChessGame.Pieces;
+﻿using ChessGame.Core.Pieces;
 
-namespace ChessGame.Model;
+namespace ChessGame.Core.Model;
 
 internal sealed record MoveState
 {

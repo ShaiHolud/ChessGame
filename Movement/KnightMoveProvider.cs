@@ -1,7 +1,7 @@
-﻿using ChessGame.Model;
-using ChessGame.Pieces;
+﻿using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
 
-namespace ChessGame.Movement
+namespace ChessGame.Core.Movement
 {
     internal class KnightMoveProvider : MoveProviderBase
     {

@@ -1,4 +1,4 @@
-﻿namespace ChessGame.Model
+﻿namespace ChessGame.Core.Model
 {
     public readonly record struct Position(int Row, int Column)
     {

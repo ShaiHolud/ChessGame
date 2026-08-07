@@ -1,7 +1,7 @@
-﻿using ChessGame.Model;
-using ChessGame.Pieces;
+﻿using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
 
-namespace ChessGame.Movement
+namespace ChessGame.Core.Movement
 {
     public class PawnMoveProvider : MoveProviderBase
     {
@@ -23,7 +23,7 @@ namespace ChessGame.Movement
                 moves.Add(first);
 
             Position second = pawn.Position.Offset(doubleForward);
-            if (pawn.MoveCount == 0 && board.Contains(second) && board.IsCellFree(second))
+            if (pawn.MoveCount == 0 && board.Contains(second) && board.IsCellFree(first) && board.IsCellFree(second))
             {
                 moves.Add(second);
             }
