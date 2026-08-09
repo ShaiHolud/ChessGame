@@ -1,5 +1,7 @@
-﻿using ChessGame.Core.Model;
+﻿using ChessGame.Core.Events;
+using ChessGame.Core.Model;
 using ChessGame.Core.Pieces;
+using ChessGame.Core.Results;
 
 namespace ChessGame.Core
 {
@@ -18,8 +20,13 @@ namespace ChessGame.Core
 
         public PieceColor CurrentTurn { get; private set; } = PieceColor.White;
 
-        public void Move(Move move)
+        public MoveResult Move(Move move)
         {
+            MoveResult result = new()
+            {
+                Success = true
+            };
+
             ChessPiece? piece = _board.GetPiece(move.From);
 
             if (piece == null)
@@ -30,27 +37,39 @@ namespace ChessGame.Core
 
             if (IsCastle(move, out CastleInfo castleInfo))
             {
-                MoveState state = _board.MoveCastle(
-                    move,
-                    castleInfo);
+                MoveState state =
+                    _board.MoveCastle(move, castleInfo);
 
                 _history.Push(state);
 
+                result.Events.Add(
+                    new GameEvent(
+                        GameEventType.Castle,
+                        "Рокировка"));
+
                 LastMove = move;
 
-                SwitchTurnAndCheckState();
+                CompleteMove(result);
 
-                return;
+                return result;
             }
 
             if (IsEnPassant(move, out Pawn enemyPawn))
             {
                 MoveState enPassantState = _board.MoveEnPassant(move, enemyPawn);
                 _history.Push(enPassantState);
-                LastMove = move;
-                SwitchTurnAndCheckState();
 
-                return;
+                result.Events.Add(
+                    new GameEvent(
+                        GameEventType.EnPassant,
+                        $"{piece.Color} Pawn {move.From} " +
+                        $"Взятие {enemyPawn.Color} пешки на проходе"));
+
+                LastMove = move;
+
+                CompleteMove(result);
+
+                return result;
             }
 
             IReadOnlyCollection<Move> legalMoves = GetLegalMoves(move.From);
@@ -59,17 +78,39 @@ namespace ChessGame.Core
                 throw new InvalidOperationException($"Недопустимый ход {move}.");
 
             MoveState normalMoveState = _board.MovePiece(move);
+
             _history.Push(normalMoveState);
-            TryPromotePawn(move.To);
+
+            if (normalMoveState.CapturedPiece != null)
+            {
+                result.Events.Add(
+                    new GameEvent(
+                        GameEventType.Capture,
+                        $"{piece.Color} {piece.GetType().Name} {move.From} " +
+                        $"captures {normalMoveState.CapturedPiece.Color} " +
+                        $"{normalMoveState.CapturedPiece.GetType().Name} {move.To}"));
+            }
+
+            GameEvent? promotion = TryPromotePawn(move.To);
+
+            if (promotion != null)
+            {
+                result.Events.Add(promotion);
+            }
+
             LastMove = move;
-            SwitchTurnAndCheckState();
+
+            CompleteMove(result);
+
+            return result;
         }
 
-        public void Move(string from, string to)
+        public MoveResult Move(string from, string to)
         {
-            Move(new Move(
-                Position.Parse(from),
-                Position.Parse(to)));
+            return Move(
+                new Move(
+                    Position.Parse(from),
+                    Position.Parse(to)));
         }
 
         public IReadOnlyCollection<Move> GetPossibleMoves(Position position)
@@ -174,23 +215,36 @@ namespace ChessGame.Core
                 && !HasLegalMoves(color);
         }
 
-        private void TryPromotePawn(Position position)
+        private GameEvent? TryPromotePawn(Position position)
         {
             ChessPiece? piece = _board.GetPiece(position);
 
             if (piece is not Pawn pawn)
-                return;
+                return null;
 
             if (pawn.Color == PieceColor.White && position.Row == 7)
             {
                 _board.RemovePiece(position);
-                _board.AddPiece(new Queen(PieceColor.White, position));
+
+                _board.AddPiece(new Queen(
+                    PieceColor.White,
+                    position));
+
+                return new GameEvent(GameEventType.Promotion, "Белая пешка превращена в ферзя");
             }
-            else if (pawn.Color == PieceColor.Black && position.Row == 0)
+
+            if (pawn.Color == PieceColor.Black && position.Row == 0)
             {
                 _board.RemovePiece(position);
-                _board.AddPiece(new Queen(PieceColor.Black, position));
+
+                _board.AddPiece(new Queen(
+                    PieceColor.Black,
+                    position));
+
+                return new GameEvent(GameEventType.Promotion, "Черная пешка превращена в ферзя");
             }
+
+            return null;
         }
 
         private bool IsCastle(Move move, out CastleInfo castleInfo)
@@ -273,20 +327,42 @@ namespace ChessGame.Core
             return false;
         }
 
-        private void SwitchTurnAndCheckState()
+        private GameEvent? SwitchTurnAndCheckState()
         {
             CurrentTurn = CurrentTurn == PieceColor.White
                 ? PieceColor.Black
                 : PieceColor.White;
 
             if (IsCheckmate(CurrentTurn))
+            {
                 State = GameState.Checkmate;
-            else if (IsStalemate(CurrentTurn))
+
+                return new GameEvent(
+                    GameEventType.Checkmate,
+                    $"Мат. {CurrentTurn} проиграл.");
+            }
+
+            if (IsStalemate(CurrentTurn))
+            {
                 State = GameState.Stalemate;
-            else if (IsCheck(CurrentTurn))
+
+                return new GameEvent(
+                    GameEventType.Stalemate,
+                    $"Пат. Ход {CurrentTurn}.");
+            }
+
+            if (IsCheck(CurrentTurn))
+            {
                 State = GameState.Check;
-            else
-                State = GameState.Normal;
+
+                return new GameEvent(
+                    GameEventType.Check,
+                    $"Шах {CurrentTurn}.");
+            }
+
+            State = GameState.Normal;
+
+            return null;
         }
 
         public GameState State { get; private set; }
@@ -378,6 +454,21 @@ namespace ChessGame.Core
         {
             return _board.GetPieces(PieceColor.White)
                          .Concat(_board.GetPieces(PieceColor.Black));
+        }
+
+        private void CompleteMove(MoveResult result)
+        {
+            GameEvent? stateEvent =
+                SwitchTurnAndCheckState();
+
+            if (stateEvent != null)
+            {
+                result.Events.Add(stateEvent);
+            }
+
+            result.Check = State == GameState.Check;
+            result.Checkmate = State == GameState.Checkmate;
+            result.Stalemate = State == GameState.Stalemate;
         }
     }
 }

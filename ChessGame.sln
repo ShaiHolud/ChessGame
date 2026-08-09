@@ -9,11 +9,13 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Tests", "..\Chess
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Server", "..\ChessGame.Server\ChessGame.Server.csproj", "{65E904CE-8399-45B9-8122-5DDF79A089A2}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChessGame.Client", "..\ChessGame.Client\ChessGame.Client.csproj", "{353FEB16-315C-4793-9C46-E2B3E6FE8C36}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Client", "..\ChessGame.Client\ChessGame.Client.csproj", "{353FEB16-315C-4793-9C46-E2B3E6FE8C36}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChessGame.Contracts", "..\ChessGame.Contracts\ChessGame.Contracts.csproj", "{06E85F62-3E54-4FBF-BA73-1B0C5FA7EA13}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Contracts", "..\ChessGame.Contracts\ChessGame.Contracts.csproj", "{06E85F62-3E54-4FBF-BA73-1B0C5FA7EA13}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChessGame.ConsoleClient", "..\ChessGame.ConsoleClient\ChessGame.ConsoleClient.csproj", "{3C68DCEA-4EF0-48C6-AFF9-90743A42E4CB}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.ConsoleClient", "..\ChessGame.ConsoleClient\ChessGame.ConsoleClient.csproj", "{3C68DCEA-4EF0-48C6-AFF9-90743A42E4CB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChessGame.Client.Tests", "..\ChessGame.Client.Tests\ChessGame.Client.Tests.csproj", "{FC4CE5B7-F1B7-4FEC-8063-7EE872D1A7B4}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -45,6 +47,10 @@ Global
 		{3C68DCEA-4EF0-48C6-AFF9-90743A42E4CB}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3C68DCEA-4EF0-48C6-AFF9-90743A42E4CB}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3C68DCEA-4EF0-48C6-AFF9-90743A42E4CB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FC4CE5B7-F1B7-4FEC-8063-7EE872D1A7B4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FC4CE5B7-F1B7-4FEC-8063-7EE872D1A7B4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FC4CE5B7-F1B7-4FEC-8063-7EE872D1A7B4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FC4CE5B7-F1B7-4FEC-8063-7EE872D1A7B4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
