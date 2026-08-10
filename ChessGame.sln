@@ -15,7 +15,14 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Contracts", "..\C
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.ConsoleClient", "..\ChessGame.ConsoleClient\ChessGame.ConsoleClient.csproj", "{3C68DCEA-4EF0-48C6-AFF9-90743A42E4CB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChessGame.Client.Tests", "..\ChessGame.Client.Tests\ChessGame.Client.Tests.csproj", "{FC4CE5B7-F1B7-4FEC-8063-7EE872D1A7B4}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Client.Tests", "..\ChessGame.Client.Tests\ChessGame.Client.Tests.csproj", "{FC4CE5B7-F1B7-4FEC-8063-7EE872D1A7B4}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.IntegrationTests", "..\ChessGame.IntegrationTests\ChessGame.IntegrationTests.csproj", "{625B92B2-A851-4F86-9848-2FF3AB1A609B}"
+	ProjectSection(ProjectDependencies) = postProject
+		{06E85F62-3E54-4FBF-BA73-1B0C5FA7EA13} = {06E85F62-3E54-4FBF-BA73-1B0C5FA7EA13}
+		{65E904CE-8399-45B9-8122-5DDF79A089A2} = {65E904CE-8399-45B9-8122-5DDF79A089A2}
+		{BAEACAB6-EE91-4C4B-91A3-008A471D8CDB} = {BAEACAB6-EE91-4C4B-91A3-008A471D8CDB}
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -51,6 +58,10 @@ Global
 		{FC4CE5B7-F1B7-4FEC-8063-7EE872D1A7B4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FC4CE5B7-F1B7-4FEC-8063-7EE872D1A7B4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FC4CE5B7-F1B7-4FEC-8063-7EE872D1A7B4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{625B92B2-A851-4F86-9848-2FF3AB1A609B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{625B92B2-A851-4F86-9848-2FF3AB1A609B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{625B92B2-A851-4F86-9848-2FF3AB1A609B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{625B92B2-A851-4F86-9848-2FF3AB1A609B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
