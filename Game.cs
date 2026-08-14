@@ -2,6 +2,7 @@
 using ChessGame.Core.Model;
 using ChessGame.Core.Pieces;
 using ChessGame.Core.Results;
+using ChessGame.Core.Factories;
 
 namespace ChessGame.Core
 {
@@ -72,10 +73,15 @@ namespace ChessGame.Core
                 return result;
             }
 
-            IReadOnlyCollection<Move> legalMoves = GetLegalMoves(move.From);
+            IReadOnlyCollection<Move> legalMoves =  GetLegalMoves(move.From);
 
-            if (!legalMoves.Contains(move))
-                throw new InvalidOperationException($"Недопустимый ход {move}.");
+            bool isLegalMove = legalMoves.Any(legalMove => legalMove.From == move.From && legalMove.To == move.To);
+
+            if (!isLegalMove)
+            {
+                throw new InvalidOperationException(
+                    $"Недопустимый ход {move}.");
+            }
 
             MoveState normalMoveState = _board.MovePiece(move);
 
@@ -91,7 +97,7 @@ namespace ChessGame.Core
                         $"{normalMoveState.CapturedPiece.GetType().Name} {move.To}"));
             }
 
-            GameEvent? promotion = TryPromotePawn(move.To);
+            GameEvent? promotion = TryPromotePawn(move.To, move.Promotion ?? PromotionPiece.Queen);
 
             if (promotion != null)
             {
@@ -215,33 +221,47 @@ namespace ChessGame.Core
                 && !HasLegalMoves(color);
         }
 
-        private GameEvent? TryPromotePawn(Position position)
+        private GameEvent? TryPromotePawn(Position position, PromotionPiece promotionPiece)
         {
             ChessPiece? piece = _board.GetPiece(position);
 
             if (piece is not Pawn pawn)
                 return null;
 
-            if (pawn.Color == PieceColor.White && position.Row == 7)
+            if (pawn.Color == PieceColor.White &&
+                position.Row == 7)
             {
                 _board.RemovePiece(position);
 
-                _board.AddPiece(new Queen(
-                    PieceColor.White,
-                    position));
+                ChessPiece promotedPiece =
+                    PromotionPieceFactory.Create(
+                        pawn.Color,
+                        position,
+                        promotionPiece);
 
-                return new GameEvent(GameEventType.Promotion, "Белая пешка превращена в ферзя");
+                _board.AddPiece(promotedPiece);
+
+                return new GameEvent(
+                    GameEventType.Promotion,
+                    $"Белая пешка превращена в {promotionPiece}");
             }
 
-            if (pawn.Color == PieceColor.Black && position.Row == 0)
+            if (pawn.Color == PieceColor.Black &&
+                position.Row == 0)
             {
                 _board.RemovePiece(position);
 
-                _board.AddPiece(new Queen(
-                    PieceColor.Black,
-                    position));
+                ChessPiece promotedPiece =
+                    PromotionPieceFactory.Create(
+                        pawn.Color,
+                        position,
+                        promotionPiece);
 
-                return new GameEvent(GameEventType.Promotion, "Черная пешка превращена в ферзя");
+                _board.AddPiece(promotedPiece);
+
+                return new GameEvent(
+                    GameEventType.Promotion,
+                    $"Черная пешка превращена в {promotionPiece}");
             }
 
             return null;

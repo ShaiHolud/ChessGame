@@ -24,6 +24,11 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.IntegrationTests"
 		{BAEACAB6-EE91-4C4B-91A3-008A471D8CDB} = {BAEACAB6-EE91-4C4B-91A3-008A471D8CDB}
 	EndProjectSection
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Элементы решения", "Элементы решения", "{94E7E2CB-3BC5-4784-BFF5-067CF1782F3E}"
+	ProjectSection(SolutionItems) = preProject
+		export-solution.ps1 = export-solution.ps1
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
