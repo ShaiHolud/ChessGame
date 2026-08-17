@@ -11,7 +11,9 @@ namespace ChessGame.Core
         private readonly Board _board;
 
         private readonly Stack<MoveState> _history = [];
+        private readonly List<Move> _moveHistory = [];
 
+        public IReadOnlyList<Move> MoveHistory => _moveHistory;
         public Move? LastMove { get; private set; }
 
         public Game(Board board)
@@ -42,6 +44,7 @@ namespace ChessGame.Core
                     _board.MoveCastle(move, castleInfo);
 
                 _history.Push(state);
+                _moveHistory.Add(move);
 
                 result.Events.Add(
                     new GameEvent(
@@ -59,6 +62,7 @@ namespace ChessGame.Core
             {
                 MoveState enPassantState = _board.MoveEnPassant(move, enemyPawn);
                 _history.Push(enPassantState);
+                _moveHistory.Add(move);
 
                 result.Events.Add(
                     new GameEvent(
@@ -86,6 +90,7 @@ namespace ChessGame.Core
             MoveState normalMoveState = _board.MovePiece(move);
 
             _history.Push(normalMoveState);
+            _moveHistory.Add(move);
 
             if (normalMoveState.CapturedPiece != null)
             {
@@ -454,6 +459,10 @@ namespace ChessGame.Core
             MoveState state = _history.Pop();
 
             _board.UndoMove(state);
+            if (_moveHistory.Count > 0)
+            {
+                _moveHistory.RemoveAt(_moveHistory.Count - 1);
+            }
 
             LastMove = _history.Count > 0
                 ? new Move(_history.Peek().From, _history.Peek().To)
