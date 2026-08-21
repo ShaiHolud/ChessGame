@@ -8,6 +8,7 @@
         Stalemate,
         Castle,
         Promotion,
-        EnPassant
+        EnPassant,
+        Draw
     }
 }

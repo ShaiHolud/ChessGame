@@ -13,5 +13,7 @@ namespace ChessGame.Core.Results
         public bool Checkmate { get; set; }
 
         public bool Stalemate { get; set; }
+
+        public bool Draw { get; set; }
     }
 }

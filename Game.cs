@@ -11,20 +11,42 @@ namespace ChessGame.Core
         private readonly Board _board;
 
         private readonly Stack<MoveState> _history = [];
+
         private readonly List<Move> _moveHistory = [];
 
+        private readonly Stack<GameState> _stateHistory = new();
+
+        private readonly Stack<int> _halfMoveClockHistory = new();
+
+        private readonly Dictionary<string, int> _positionHistory = [];
+
+        public int HalfMoveClock { get; private set; }
+
+        public GameState State { get; private set; } = GameState.Normal;
+
+        public bool IsFinished => State is GameState.Checkmate or GameState.Stalemate or GameState.Draw;
+
         public IReadOnlyList<Move> MoveHistory => _moveHistory;
+
         public Move? LastMove { get; private set; }
 
         public Game(Board board)
         {
             _board = board;
+
+            _positionHistory[GetPositionKey()] = 1;
         }
 
         public PieceColor CurrentTurn { get; private set; } = PieceColor.White;
 
         public MoveResult Move(Move move)
         {
+            if (IsFinished)
+            {
+                throw new InvalidOperationException(
+                    "Партия окончена.");
+            }
+
             MoveResult result = new()
             {
                 Success = true
@@ -43,6 +65,8 @@ namespace ChessGame.Core
                 MoveState state =
                     _board.MoveCastle(move, castleInfo);
 
+                _stateHistory.Push(State);
+                _halfMoveClockHistory.Push(HalfMoveClock);
                 _history.Push(state);
                 _moveHistory.Add(move);
 
@@ -53,6 +77,8 @@ namespace ChessGame.Core
 
                 LastMove = move;
 
+                HalfMoveClock++;
+
                 CompleteMove(result);
 
                 return result;
@@ -61,6 +87,8 @@ namespace ChessGame.Core
             if (IsEnPassant(move, out Pawn enemyPawn))
             {
                 MoveState enPassantState = _board.MoveEnPassant(move, enemyPawn);
+                _stateHistory.Push(State);
+                _halfMoveClockHistory.Push(HalfMoveClock);
                 _history.Push(enPassantState);
                 _moveHistory.Add(move);
 
@@ -71,6 +99,8 @@ namespace ChessGame.Core
                         $"Взятие {enemyPawn.Color} пешки на проходе"));
 
                 LastMove = move;
+
+                HalfMoveClock = 0;
 
                 CompleteMove(result);
 
@@ -89,6 +119,8 @@ namespace ChessGame.Core
 
             MoveState normalMoveState = _board.MovePiece(move);
 
+            _stateHistory.Push(State);
+            _halfMoveClockHistory.Push(HalfMoveClock);
             _history.Push(normalMoveState);
             _moveHistory.Add(move);
 
@@ -110,6 +142,15 @@ namespace ChessGame.Core
             }
 
             LastMove = move;
+
+            if (piece is Pawn || normalMoveState.CapturedPiece != null)
+            {
+                HalfMoveClock = 0;
+            }
+            else
+            {
+                HalfMoveClock++;
+            }
 
             CompleteMove(result);
 
@@ -358,6 +399,8 @@ namespace ChessGame.Core
                 ? PieceColor.Black
                 : PieceColor.White;
 
+            RegisterCurrentPosition();
+
             if (IsCheckmate(CurrentTurn))
             {
                 State = GameState.Checkmate;
@@ -376,6 +419,24 @@ namespace ChessGame.Core
                     $"Пат. Ход {CurrentTurn}.");
             }
 
+            if (GetCurrentPositionRepetitionCount() >= 3)
+            {
+                State = GameState.Draw;
+
+                return new GameEvent(
+                    GameEventType.Draw,
+                    "Ничья по трёхкратному повторению позиции.");
+            }
+
+            if (HalfMoveClock >= 100)
+            {
+                State = GameState.Draw;
+
+                return new GameEvent(
+                    GameEventType.Draw,
+                    "Ничья по правилу 50 ходов.");
+            }
+
             if (IsCheck(CurrentTurn))
             {
                 State = GameState.Check;
@@ -388,16 +449,6 @@ namespace ChessGame.Core
             State = GameState.Normal;
 
             return null;
-        }
-
-        public GameState State { get; private set; }
-
-        public enum GameState
-        {
-            Normal,
-            Check,
-            Checkmate,
-            Stalemate
         }
 
         private bool IsEnPassant(Move move, out Pawn capturedPawn)
@@ -456,21 +507,42 @@ namespace ChessGame.Core
             if (_history.Count == 0)
                 return;
 
+            // Убираем текущую позицию из истории повторений
+            UnregisterCurrentPosition();
+
             MoveState state = _history.Pop();
 
             _board.UndoMove(state);
+
+            if (_stateHistory.Count > 0)
+            {
+                State = _stateHistory.Pop();
+            }
+            else
+            {
+                State = GameState.Normal;
+            }
+
             if (_moveHistory.Count > 0)
             {
                 _moveHistory.RemoveAt(_moveHistory.Count - 1);
             }
 
+            if (_halfMoveClockHistory.Count > 0)
+            {
+                HalfMoveClock = _halfMoveClockHistory.Pop();
+            }
+
             LastMove = _history.Count > 0
-                ? new Move(_history.Peek().From, _history.Peek().To)
+                ? new Move(
+                    _history.Peek().From,
+                    _history.Peek().To)
                 : null;
 
-            CurrentTurn = CurrentTurn == PieceColor.White
-                ? PieceColor.Black
-                : PieceColor.White;
+            CurrentTurn =
+                CurrentTurn == PieceColor.White
+                    ? PieceColor.Black
+                    : PieceColor.White;
         }
 
         public IEnumerable<ChessPiece> GetPieces(PieceColor pieceColor)
@@ -498,6 +570,201 @@ namespace ChessGame.Core
             result.Check = State == GameState.Check;
             result.Checkmate = State == GameState.Checkmate;
             result.Stalemate = State == GameState.Stalemate;
+
+            if (IsDrawByInsufficientMaterial())
+            {
+                State = GameState.Draw;
+
+                result.Draw = true;
+
+                result.Events.Add(
+                    new GameEvent(
+                        GameEventType.Draw,
+                        "Ничья: недостаточный материал"));
+            }
+        }
+
+        public bool IsDrawByInsufficientMaterial()
+        {
+            IEnumerable<ChessPiece> pieces = GetAllPieces();
+
+            int nonKingPieces =
+                pieces.Count(piece => piece is not King);
+
+            if (nonKingPieces == 0)
+                return true;
+
+            if (nonKingPieces == 1)
+            {
+                return pieces.Any(
+                    piece =>
+                        piece is Bishop ||
+                        piece is Knight);
+            }
+
+            return false;
+        }
+
+        private string GetPositionKey()
+        {
+            string pieces = string.Join(
+                "|",
+                GetAllPieces()
+                    .OrderBy(piece => piece.Position.Row)
+                    .ThenBy(piece => piece.Position.Column)
+                    .Select(piece =>
+                        $"{piece.Color}:{piece.GetType().Name}:{piece.Position}"));
+
+            string castlingRights = GetCastlingRights();
+
+            string enPassant =
+                GetEnPassantTarget()?.ToString() ?? "-";
+
+            return $"{CurrentTurn};{pieces};{castlingRights};{enPassant}";
+        }
+
+        private Position? GetEnPassantTarget()
+        {
+            if (LastMove is not Move lastMove)
+                return null;
+
+            ChessPiece? piece =
+                _board.GetPiece(lastMove.To);
+
+            if (piece is not Pawn)
+                return null;
+
+            if (Math.Abs(
+                    lastMove.To.Row -
+                    lastMove.From.Row) != 2)
+            {
+                return null;
+            }
+
+            int targetRow =
+                (lastMove.From.Row +
+                 lastMove.To.Row) / 2;
+
+            return new Position(
+                targetRow,
+                lastMove.To.Column);
+        }
+
+        private int RegisterCurrentPosition()
+        {
+            string key = GetPositionKey();
+
+            if (_positionHistory.TryGetValue(
+                    key,
+                    out int count))
+            {
+                count++;
+
+                _positionHistory[key] = count;
+
+                return count;
+            }
+
+            _positionHistory[key] = 1;
+
+            return 1;
+        }
+
+        public int GetCurrentPositionRepetitionCount()
+        {
+            string key = GetPositionKey();
+
+            return _positionHistory.TryGetValue(
+                key,
+                out int count)
+                    ? count
+                    : 0;
+        }
+
+        private string GetCastlingRights()
+        {
+            List<string> rights = [];
+
+            ChessPiece? whiteKing =
+                _board.GetPiece(Position.Parse("E1"));
+
+            if (whiteKing is King &&
+                whiteKing.Color == PieceColor.White &&
+                whiteKing.MoveCount == 0)
+            {
+                ChessPiece? whiteKingSideRook =
+                    _board.GetPiece(Position.Parse("H1"));
+
+                if (whiteKingSideRook is Rook &&
+                    whiteKingSideRook.Color == PieceColor.White &&
+                    whiteKingSideRook.MoveCount == 0)
+                {
+                    rights.Add("K");
+                }
+
+                ChessPiece? whiteQueenSideRook =
+                    _board.GetPiece(Position.Parse("A1"));
+
+                if (whiteQueenSideRook is Rook &&
+                    whiteQueenSideRook.Color == PieceColor.White &&
+                    whiteQueenSideRook.MoveCount == 0)
+                {
+                    rights.Add("Q");
+                }
+            }
+
+            ChessPiece? blackKing =
+                _board.GetPiece(Position.Parse("E8"));
+
+            if (blackKing is King &&
+                blackKing.Color == PieceColor.Black &&
+                blackKing.MoveCount == 0)
+            {
+                ChessPiece? blackKingSideRook =
+                    _board.GetPiece(Position.Parse("H8"));
+
+                if (blackKingSideRook is Rook &&
+                    blackKingSideRook.Color == PieceColor.Black &&
+                    blackKingSideRook.MoveCount == 0)
+                {
+                    rights.Add("k");
+                }
+
+                ChessPiece? blackQueenSideRook =
+                    _board.GetPiece(Position.Parse("A8"));
+
+                if (blackQueenSideRook is Rook &&
+                    blackQueenSideRook.Color == PieceColor.Black &&
+                    blackQueenSideRook.MoveCount == 0)
+                {
+                    rights.Add("q");
+                }
+            }
+
+            return rights.Count > 0
+                ? string.Concat(rights)
+                : "-";
+        }
+
+        private void UnregisterCurrentPosition()
+        {
+            string key = GetPositionKey();
+
+            if (!_positionHistory.TryGetValue(
+                    key,
+                    out int count))
+            {
+                return;
+            }
+
+            if (count <= 1)
+            {
+                _positionHistory.Remove(key);
+            }
+            else
+            {
+                _positionHistory[key] = count - 1;
+            }
         }
     }
 }
