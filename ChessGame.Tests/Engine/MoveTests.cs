@@ -1760,5 +1760,1195 @@ namespace ChessGame.Tests.Engine
                 board.GetPiece(
                     Position.Parse("A7")));
         }
+
+        [Fact]
+        public void Undo_Castle_Should_Allow_Castling_Again()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.White,
+                    Position.Parse("H1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            Move castleMove = new(
+                Position.Parse("E1"),
+                Position.Parse("G1"));
+
+            // Act — первая рокировка
+            MoveResult firstResult =
+                game.Move(castleMove);
+
+            // Assert
+            Assert.True(firstResult.Success);
+
+            Assert.Contains(
+                firstResult.Events,
+                e => e.Type == GameEventType.Castle);
+
+            ChessPiece? kingAfterCastle =
+                board.GetPiece(
+                    Position.Parse("G1"));
+
+            Assert.NotNull(kingAfterCastle);
+
+            Assert.IsType<King>(kingAfterCastle);
+
+            ChessPiece? rookAfterCastle =
+                board.GetPiece(
+                    Position.Parse("F1"));
+
+            Assert.NotNull(rookAfterCastle);
+
+            Assert.IsType<Rook>(rookAfterCastle);
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("E1")));
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("H1")));
+
+            // Act — отменяем рокировку
+            game.Undo();
+
+            // Assert — король должен вернуться
+            ChessPiece? restoredKing =
+                board.GetPiece(
+                    Position.Parse("E1"));
+
+            Assert.NotNull(restoredKing);
+
+            Assert.IsType<King>(restoredKing);
+
+            Assert.Equal(
+                PieceColor.White,
+                restoredKing.Color);
+
+            // Ладья должна вернуться
+            ChessPiece? restoredRook =
+                board.GetPiece(
+                    Position.Parse("H1"));
+
+            Assert.NotNull(restoredRook);
+
+            Assert.IsType<Rook>(restoredRook);
+
+            Assert.Equal(
+                PieceColor.White,
+                restoredRook.Color);
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("G1")));
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("F1")));
+
+            // Важно: после Undo снова ход белых
+            Assert.Equal(
+                PieceColor.White,
+                game.CurrentTurn);
+
+            // Дополнительная проверка:
+            // MoveCount должен быть восстановлен,
+            // иначе повторная рокировка не сработает
+            Assert.Equal(
+                0,
+                restoredKing.MoveCount);
+
+            Assert.Equal(
+                0,
+                restoredRook.MoveCount);
+
+            // Act — рокируемся повторно
+            MoveResult secondResult =
+                game.Move(castleMove);
+
+            // Assert
+            Assert.True(secondResult.Success);
+
+            Assert.Contains(
+                secondResult.Events,
+                e => e.Type == GameEventType.Castle);
+
+            ChessPiece? finalKing =
+                board.GetPiece(
+                    Position.Parse("G1"));
+
+            Assert.NotNull(finalKing);
+
+            Assert.IsType<King>(finalKing);
+
+            ChessPiece? finalRook =
+                board.GetPiece(
+                    Position.Parse("F1"));
+
+            Assert.NotNull(finalRook);
+
+            Assert.IsType<Rook>(finalRook);
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("E1")));
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("H1")));
+        }
+
+        [Fact]
+        public void Undo_Capture_Should_Allow_Capture_Again()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.White,
+                    Position.Parse("A1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            board.AddPiece(
+                new Knight(
+                    PieceColor.Black,
+                    Position.Parse("A8")));
+
+            Game game = new(board);
+
+            Move captureMove = new(
+                Position.Parse("A1"),
+                Position.Parse("A8"));
+
+            // Первый захват
+            MoveResult firstResult =
+                game.Move(captureMove);
+
+            Assert.True(firstResult.Success);
+
+            Assert.Contains(
+                firstResult.Events,
+                e => e.Type == GameEventType.Capture);
+
+            ChessPiece? rookAfterCapture =
+                board.GetPiece(
+                    Position.Parse("A8"));
+
+            Assert.NotNull(rookAfterCapture);
+
+            Assert.IsType<Rook>(rookAfterCapture);
+
+            Assert.Equal(
+                PieceColor.White,
+                rookAfterCapture.Color);
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A1")));
+
+            // Act — отменяем взятие
+            game.Undo();
+
+            // Ладья должна вернуться
+            ChessPiece? restoredRook =
+                board.GetPiece(
+                    Position.Parse("A1"));
+
+            Assert.NotNull(restoredRook);
+
+            Assert.IsType<Rook>(restoredRook);
+
+            Assert.Equal(
+                PieceColor.White,
+                restoredRook.Color);
+
+            // Конь должен восстановиться
+            ChessPiece? restoredKnight =
+                board.GetPiece(
+                    Position.Parse("A8"));
+
+            Assert.NotNull(restoredKnight);
+
+            Assert.IsType<Knight>(restoredKnight);
+
+            Assert.Equal(
+                PieceColor.Black,
+                restoredKnight.Color);
+
+            Assert.Equal(
+                PieceColor.White,
+                game.CurrentTurn);
+
+            // Повторяем взятие
+            MoveResult secondResult =
+                game.Move(captureMove);
+
+            // Assert
+            Assert.True(secondResult.Success);
+
+            Assert.Contains(
+                secondResult.Events,
+                e => e.Type == GameEventType.Capture);
+
+            ChessPiece? finalRook =
+                board.GetPiece(
+                    Position.Parse("A8"));
+
+            Assert.NotNull(finalRook);
+
+            Assert.IsType<Rook>(finalRook);
+
+            Assert.Equal(
+                PieceColor.White,
+                finalRook.Color);
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A1")));
+        }
+
+        [Fact]
+        public void Undo_Capture_Should_Restore_MoveCount()
+        {
+            // Arrange
+            Board board = new();
+
+            Rook rook = new(
+                PieceColor.White,
+                Position.Parse("A1"));
+
+            Knight knight = new(
+                PieceColor.Black,
+                Position.Parse("A8"));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(rook);
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            board.AddPiece(knight);
+
+            Game game = new(board);
+
+            Move captureMove = new(
+                Position.Parse("A1"),
+                Position.Parse("A8"));
+
+            // Начальное состояние
+            Assert.Equal(
+                0,
+                rook.MoveCount);
+
+            // Первый ход
+            game.Move(captureMove);
+
+            Assert.Equal(
+                1,
+                rook.MoveCount);
+
+            // Undo
+            game.Undo();
+
+            Assert.Equal(
+                0,
+                rook.MoveCount);
+
+            Assert.Same(
+                rook,
+                board.GetPiece(
+                    Position.Parse("A1")));
+
+            Assert.Same(
+                knight,
+                board.GetPiece(
+                    Position.Parse("A8")));
+
+            // Повторный ход
+            game.Move(captureMove);
+
+            Assert.Equal(
+                1,
+                rook.MoveCount);
+        }
+
+        [Fact]
+        public void Undo_NormalMove_Should_Restore_HalfMoveClock()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.White,
+                    Position.Parse("A1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            int initialHalfMoveClock =
+                game.HalfMoveClock;
+
+            Move move = new(
+                Position.Parse("A1"),
+                Position.Parse("A2"));
+
+            // Act — обычный ход ладьёй
+            game.Move(move);
+
+            // Assert — счётчик должен увеличиться
+            Assert.Equal(
+                initialHalfMoveClock + 1,
+                game.HalfMoveClock);
+
+            // Act — отменяем ход
+            game.Undo();
+
+            // Assert — счётчик должен восстановиться
+            Assert.Equal(
+                initialHalfMoveClock,
+                game.HalfMoveClock);
+
+            // Дополнительно проверяем позицию
+            ChessPiece? rook =
+                board.GetPiece(
+                    Position.Parse("A1"));
+
+            Assert.NotNull(rook);
+
+            Assert.IsType<Rook>(rook);
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A2")));
+
+            Assert.Equal(
+                PieceColor.White,
+                game.CurrentTurn);
+        }
+
+        [Fact]
+        public void QueenSide_Castling_Should_Move_King_And_Rook()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.White,
+                    Position.Parse("A1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            Move castleMove = new(
+                Position.Parse("E1"),
+                Position.Parse("C1"));
+
+            // Act
+            MoveResult result =
+                game.Move(castleMove);
+
+            // Assert
+            Assert.True(result.Success);
+
+            Assert.Contains(
+                result.Events,
+                e => e.Type == GameEventType.Castle);
+
+            // Король должен оказаться на C1
+            ChessPiece? king =
+                board.GetPiece(
+                    Position.Parse("C1"));
+
+            Assert.NotNull(king);
+
+            Assert.IsType<King>(king);
+
+            Assert.Equal(
+                PieceColor.White,
+                king.Color);
+
+            // Ладья должна оказаться на D1
+            ChessPiece? rook =
+                board.GetPiece(
+                    Position.Parse("D1"));
+
+            Assert.NotNull(rook);
+
+            Assert.IsType<Rook>(rook);
+
+            Assert.Equal(
+                PieceColor.White,
+                rook.Color);
+
+            // Исходные клетки должны быть пустыми
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("E1")));
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A1")));
+
+            // Между исходной позицией и конечной
+            // не должно появиться лишних фигур
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("B1")));
+
+            // Ход должен перейти чёрным
+            Assert.Equal(
+                PieceColor.Black,
+                game.CurrentTurn);
+        }
+
+        [Fact]
+        public void QueenSide_Castling_Should_Not_Be_Allowed_Through_Attacked_Square()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.White,
+                    Position.Parse("A1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            // Чёрная ладья атакует D1
+            board.AddPiece(
+                new Rook(
+                    PieceColor.Black,
+                    Position.Parse("D8")));
+
+            Game game = new(board);
+
+            Move castleMove = new(
+                Position.Parse("E1"),
+                Position.Parse("C1"));
+
+            // Act + Assert
+            InvalidOperationException exception =
+                Assert.Throws<InvalidOperationException>(
+                    () => game.Move(castleMove));
+
+            Assert.Contains(
+                "Недопустимый ход",
+                exception.Message);
+
+            // Король остаётся на месте
+            ChessPiece? king =
+                board.GetPiece(
+                    Position.Parse("E1"));
+
+            Assert.NotNull(king);
+            Assert.IsType<King>(king);
+            Assert.Equal(
+                PieceColor.White,
+                king.Color);
+
+            // Ладья тоже остаётся на месте
+            ChessPiece? rook =
+                board.GetPiece(
+                    Position.Parse("A1"));
+
+            Assert.NotNull(rook);
+            Assert.IsType<Rook>(rook);
+            Assert.Equal(
+                PieceColor.White,
+                rook.Color);
+
+            // Целевые клетки пустые
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("C1")));
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("D1")));
+
+            // Ход остаётся за белыми
+            Assert.Equal(
+                PieceColor.White,
+                game.CurrentTurn);
+        }
+
+        [Fact]
+        public void Undo_QueenSide_Castling_Should_Allow_Castling_Again()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.White,
+                    Position.Parse("A1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            Move castleMove = new(
+                Position.Parse("E1"),
+                Position.Parse("C1"));
+
+            // Act — первая длинная рокировка
+            MoveResult firstResult =
+                game.Move(castleMove);
+
+            // Assert
+            Assert.True(firstResult.Success);
+
+            Assert.Contains(
+                firstResult.Events,
+                e => e.Type == GameEventType.Castle);
+
+            Assert.IsType<King>(
+                board.GetPiece(
+                    Position.Parse("C1")));
+
+            Assert.IsType<Rook>(
+                board.GetPiece(
+                    Position.Parse("D1")));
+
+            // Act — Undo
+            game.Undo();
+
+            // Assert — исходная позиция восстановлена
+            ChessPiece? restoredKing =
+                board.GetPiece(
+                    Position.Parse("E1"));
+
+            Assert.NotNull(restoredKing);
+
+            Assert.IsType<King>(restoredKing);
+
+            ChessPiece? restoredRook =
+                board.GetPiece(
+                    Position.Parse("A1"));
+
+            Assert.NotNull(restoredRook);
+
+            Assert.IsType<Rook>(restoredRook);
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("C1")));
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("D1")));
+
+            Assert.Equal(
+                PieceColor.White,
+                game.CurrentTurn);
+
+            // Главное: MoveCount должен восстановиться
+            Assert.Equal(
+                0,
+                restoredKing.MoveCount);
+
+            Assert.Equal(
+                0,
+                restoredRook.MoveCount);
+
+            // Act — повторяем длинную рокировку
+            MoveResult secondResult =
+                game.Move(castleMove);
+
+            // Assert
+            Assert.True(secondResult.Success);
+
+            Assert.Contains(
+                secondResult.Events,
+                e => e.Type == GameEventType.Castle);
+
+            ChessPiece? finalKing =
+                board.GetPiece(
+                    Position.Parse("C1"));
+
+            Assert.NotNull(finalKing);
+
+            Assert.IsType<King>(finalKing);
+
+            ChessPiece? finalRook =
+                board.GetPiece(
+                    Position.Parse("D1"));
+
+            Assert.NotNull(finalRook);
+
+            Assert.IsType<Rook>(finalRook);
+
+            Assert.Equal(
+                PieceColor.White,
+                finalKing.Color);
+
+            Assert.Equal(
+                PieceColor.White,
+                finalRook.Color);
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("E1")));
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A1")));
+        }
+
+        [Fact]
+        public void Pawn_Should_Promote_To_Rook()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Pawn(
+                    PieceColor.White,
+                    Position.Parse("A7")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            Move promotionMove = new(
+                Position.Parse("A7"),
+                Position.Parse("A8"),
+                PromotionPiece.Rook);
+
+            // Act
+            MoveResult result =
+                game.Move(promotionMove);
+
+            // Assert
+            Assert.True(result.Success);
+
+            Assert.Contains(
+                result.Events,
+                e => e.Type == GameEventType.Promotion);
+
+            // Пешка должна исчезнуть
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A7")));
+
+            // На A8 должна появиться ладья
+            ChessPiece? promotedPiece =
+                board.GetPiece(
+                    Position.Parse("A8"));
+
+            Assert.NotNull(promotedPiece);
+
+            Assert.IsType<Rook>(promotedPiece);
+
+            Assert.Equal(
+                PieceColor.White,
+                promotedPiece.Color);
+
+            // Проверяем, что это действительно
+            // новая фигура с начальным MoveCount
+            Assert.Equal(
+                0,
+                promotedPiece.MoveCount);
+
+            // После хода очередь чёрных
+            Assert.Equal(
+                PieceColor.Black,
+                game.CurrentTurn);
+        }
+
+        [Fact]
+        public void Pawn_Should_Promote_To_Bishop()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Pawn(
+                    PieceColor.White,
+                    Position.Parse("A7")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            Move promotionMove = new(
+                Position.Parse("A7"),
+                Position.Parse("A8"),
+                PromotionPiece.Bishop);
+
+            // Act
+            MoveResult result =
+                game.Move(promotionMove);
+
+            // Assert
+            Assert.True(result.Success);
+
+            Assert.Contains(
+                result.Events,
+                e => e.Type == GameEventType.Promotion);
+
+            // Исходная пешка должна исчезнуть
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A7")));
+
+            // На A8 должен появиться слон
+            ChessPiece? promotedPiece =
+                board.GetPiece(
+                    Position.Parse("A8"));
+
+            Assert.NotNull(promotedPiece);
+
+            Assert.IsType<Bishop>(promotedPiece);
+
+            Assert.Equal(
+                PieceColor.White,
+                promotedPiece.Color);
+
+            // Новая фигура ещё не делала ходов
+            Assert.Equal(
+                0,
+                promotedPiece.MoveCount);
+
+            // После хода очередь чёрных
+            Assert.Equal(
+                PieceColor.Black,
+                game.CurrentTurn);
+        }
+
+        [Fact]
+        public void Pawn_Should_Promote_To_Knight()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Pawn(
+                    PieceColor.White,
+                    Position.Parse("A7")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            Move promotionMove = new(
+                Position.Parse("A7"),
+                Position.Parse("A8"),
+                PromotionPiece.Knight);
+
+            // Act
+            MoveResult result =
+                game.Move(promotionMove);
+
+            // Assert
+            Assert.True(result.Success);
+
+            Assert.Contains(
+                result.Events,
+                e => e.Type == GameEventType.Promotion);
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A7")));
+
+            ChessPiece? promotedPiece =
+                board.GetPiece(
+                    Position.Parse("A8"));
+
+            Assert.NotNull(promotedPiece);
+
+            Assert.IsType<Knight>(promotedPiece);
+
+            Assert.Equal(
+                PieceColor.White,
+                promotedPiece.Color);
+
+            Assert.Equal(
+                0,
+                promotedPiece.MoveCount);
+
+            Assert.Equal(
+                PieceColor.Black,
+                game.CurrentTurn);
+        }
+
+        [Fact]
+        public void Undo_Knight_Promotion_Should_Restore_Pawn()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            Pawn pawn = new(
+                PieceColor.White,
+                Position.Parse("A7"));
+
+            board.AddPiece(pawn);
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            Move promotionMove = new(
+                Position.Parse("A7"),
+                Position.Parse("A8"),
+                PromotionPiece.Knight);
+
+            // Act
+            game.Move(promotionMove);
+
+            // Проверяем превращение
+            Assert.IsType<Knight>(
+                board.GetPiece(
+                    Position.Parse("A8")));
+
+            // Undo
+            game.Undo();
+
+            // Assert
+            ChessPiece? restoredPiece =
+                board.GetPiece(
+                    Position.Parse("A7"));
+
+            Assert.NotNull(restoredPiece);
+
+            Assert.IsType<Pawn>(restoredPiece);
+
+            Assert.Same(
+                pawn,
+                restoredPiece);
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A8")));
+
+            Assert.Equal(
+                PieceColor.White,
+                game.CurrentTurn);
+        }
+
+        [Fact]
+        public void King_And_Two_Bishops_Against_King_Should_Not_Be_Draw()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Bishop(
+                    PieceColor.White,
+                    Position.Parse("C1")));
+
+            board.AddPiece(
+                new Bishop(
+                    PieceColor.White,
+                    Position.Parse("F1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            // Act
+            bool isDraw =
+                game.IsDrawByInsufficientMaterial();
+
+            // Assert
+            Assert.False(isDraw);
+        }
+
+        [Fact]
+        public void King_And_Rook_Against_King_Should_Not_Be_Draw()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.White,
+                    Position.Parse("A1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            // Act
+            bool isDraw =
+                game.IsDrawByInsufficientMaterial();
+
+            // Assert
+            Assert.False(isDraw);
+        }
+
+        [Fact]
+        public void King_And_Queen_Against_King_Should_Not_Be_Draw()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Queen(
+                    PieceColor.White,
+                    Position.Parse("D1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            Game game = new(board);
+
+            // Act
+            bool isDraw =
+                game.IsDrawByInsufficientMaterial();
+
+            // Assert
+            Assert.False(isDraw);
+        }
+
+        [Fact]
+        public void Multiple_Undo_Should_Restore_Initial_Position()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.White,
+                    Position.Parse("A1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.Black,
+                    Position.Parse("A8")));
+
+            Game game = new(board);
+
+            Move whiteMove1 = new(
+                Position.Parse("A1"),
+                Position.Parse("A2"));
+
+            Move blackMove = new(
+                Position.Parse("A8"),
+                Position.Parse("A7"));
+
+            Move whiteMove2 = new(
+                Position.Parse("A2"),
+                Position.Parse("A3"));
+
+            // Act
+            game.Move(whiteMove1);
+            game.Move(blackMove);
+            game.Move(whiteMove2);
+
+            game.Undo();
+            game.Undo();
+            game.Undo();
+
+            // Assert
+            Assert.IsType<Rook>(
+                board.GetPiece(
+                    Position.Parse("A1")));
+
+            Assert.IsType<Rook>(
+                board.GetPiece(
+                    Position.Parse("A8")));
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A2")));
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A3")));
+
+            Assert.Null(
+                board.GetPiece(
+                    Position.Parse("A7")));
+
+            Assert.Equal(
+                PieceColor.White,
+                game.CurrentTurn);
+
+            Assert.Null(game.LastMove);
+        }
+
+        [Fact]
+        public void Multiple_Undo_Should_Restore_LastMove()
+        {
+            // Arrange
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.White,
+                    Position.Parse("A1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            board.AddPiece(
+                new Rook(
+                    PieceColor.Black,
+                    Position.Parse("A8")));
+
+            Game game = new(board);
+
+            Move whiteMove = new(
+                Position.Parse("A1"),
+                Position.Parse("A2"));
+
+            Move blackMove = new(
+                Position.Parse("A8"),
+                Position.Parse("A7"));
+
+            // Act
+            game.Move(whiteMove);
+            game.Move(blackMove);
+
+            game.Undo();
+
+            // Assert
+            Assert.Equal(
+                whiteMove,
+                game.LastMove);
+
+            Assert.Equal(
+                PieceColor.Black,
+                game.CurrentTurn);
+        }
     }
 }

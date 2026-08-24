@@ -1,0 +1,108 @@
+﻿@page "/game"
+@using ChessGame.Web.Components
+@using Microsoft.AspNetCore.Components.Web
+@using ChessGame.Web.Services
+@using ChessGame.Core.Pieces
+@using ChessGame.Core.Model
+
+@rendermode @(new InteractiveServerRenderMode())
+
+@inject ChessGameService ChessGameService
+
+<PageTitle>Chess Game</PageTitle>
+
+<div class="game-page">
+
+    <h1>Chess Game</h1>
+
+    <div class="game-layout">
+
+        <div class="board-container">
+
+            <ChessBoard @ref="_chessBoard" OnGameChanged="GameChanged" />
+
+        </div>
+
+        <div class="game-panel">
+
+            <h2>Партия</h2>
+
+            <div class="game-info">
+
+                <div class="info-row">
+
+                    <span class="info-label">
+                        Ход
+                    </span>
+
+                    <span class="info-value">
+                        @GetTurnText()
+                    </span>
+
+                </div>
+
+                <div class="info-row">
+
+                    <span class="info-label">
+                        Состояние
+                    </span>
+
+                    <span class="info-value">
+                        @GetStateText()
+                    </span>
+
+                </div>
+
+            </div>
+
+            <button class="undo-button"
+                    @onclick="Undo">
+
+                ↶ Отменить ход
+
+            </button>
+
+        </div>
+
+    </div>
+
+</div>
+
+@code
+{
+    private ChessBoard? _chessBoard;
+
+    private async Task Undo()
+    {
+        if (_chessBoard != null)
+        {
+            await _chessBoard.UndoLastMove();
+        }
+    }
+
+    private async Task GameChanged()
+    {
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string GetTurnText()
+    {
+        return ChessGameService.CurrentTurn ==
+               PieceColor.White
+            ? "Белые"
+            : "Чёрные";
+    }
+
+    private string GetStateText()
+    {
+        return ChessGameService.State switch
+        {
+            GameState.Normal => "Обычная игра",
+            GameState.Check => "Шах",
+            GameState.Checkmate => "Мат",
+            GameState.Stalemate => "Пат",
+            GameState.Draw => "Ничья",
+            _ => ChessGameService.State.ToString()
+        };
+    }
+}

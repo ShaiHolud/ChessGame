@@ -1,0 +1,210 @@
+﻿@using ChessGame.Core.Model
+@using ChessGame.Core.Pieces
+@using ChessGame.Web.Services
+
+@inject ChessGameService ChessGameService
+
+<div class="chess-board">
+
+    @for (int displayRow = 7; displayRow >= 0; displayRow--)
+    {
+        int row = displayRow;
+
+        @for (int column = 0; column < 8; column++)
+        {
+            int currentColumn = column;
+
+            Position position = new Position(row, currentColumn);
+
+            ChessPiece? piece = ChessGameService.GetPiece(position);
+
+            bool isLightSquare = (row + currentColumn) % 2 == 0;
+
+            bool isSelected = _selectedPosition != null && _selectedPosition.Value.Equals(position);
+
+            bool isLegalMove = _legalMoves.Any(move => move.To.Equals(position));
+
+            bool isCapture = isLegalMove && piece != null && piece.Color != ChessGameService.Game.CurrentTurn;
+
+            string squareClass = GetSquareClass(isLightSquare, isSelected, isLegalMove, isCapture);
+
+            <button class="@squareClass"
+                    @onclick="() => OnSquareClick(position)">
+
+                @if (piece != null)
+                {
+                    <span class="chess-piece">
+                        @GetPieceSymbol(piece)
+                    </span>
+                }
+
+                @if (isLegalMove && piece == null)
+                {
+                    <span class="move-marker"></span>
+                }
+
+                @if (isCapture)
+                {
+                    <span class="capture-marker"></span>
+                }
+
+            </button>
+        }
+    }
+
+</div>
+
+@code
+{
+    [Parameter]
+    public EventCallback OnGameChanged { get; set; }
+
+    private Position? _selectedPosition;
+
+    private IReadOnlyCollection<Move> _legalMoves = Array.Empty<Move>();
+
+    public async Task UndoLastMove()
+    {
+        ChessGameService.Undo();
+
+        _selectedPosition = null;
+
+        _legalMoves =
+            Array.Empty<Move>();
+
+        await InvokeAsync(StateHasChanged);
+
+        await OnGameChanged.InvokeAsync();
+    }
+
+    private async Task OnSquareClick(Position position)
+    {
+        ChessPiece? piece =
+            ChessGameService.GetPiece(position);
+
+        // Ничего не выбрано
+        if (_selectedPosition == null)
+        {
+            SelectPiece(position, piece);
+            return;
+        }
+
+        // Проверяем, является ли клетка допустимым ходом
+        Move? selectedMove = _legalMoves.FirstOrDefault(move => move.To.Equals(position));
+
+        if (selectedMove is Move move)
+        {
+            ChessGameService.Game.Move(move);
+
+            _selectedPosition = null;
+
+            _legalMoves =
+                Array.Empty<Move>();
+
+            await OnGameChanged.InvokeAsync();
+
+            return;
+        }
+
+        // Кликнули по своей фигуре —
+        // переключаем выбор
+        if (piece != null &&
+            piece.Color ==
+            ChessGameService.Game.CurrentTurn)
+        {
+            SelectPiece(position, piece);
+            return;
+        }
+
+        // Кликнули в пустую клетку
+        // или по фигуре противника,
+        // которая не является допустимым ходом
+        _selectedPosition = null;
+
+        _legalMoves =
+            Array.Empty<Move>();
+    }
+
+    private void SelectPiece(Position position, ChessPiece? piece)
+    {
+        if (piece == null)
+            return;
+
+        if (piece.Color !=
+            ChessGameService.Game.CurrentTurn)
+        {
+            return;
+        }
+
+        _selectedPosition = position;
+
+        _legalMoves =
+            ChessGameService.Game
+                .GetLegalMoves(position);
+    }
+
+    private static string GetSquareClass(bool isLightSquare, bool isSelected, bool isLegalMove, bool isCapture)
+    {
+        List<string> classes = new();
+
+        classes.Add("chess-square");
+
+        classes.Add(
+            isLightSquare
+                ? "light-square"
+                : "dark-square");
+
+        if (isSelected)
+        {
+            classes.Add("selected-square");
+        }
+
+        if (isLegalMove)
+        {
+            classes.Add("legal-move-square");
+        }
+
+        if (isCapture)
+        {
+            classes.Add("capture-square");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private static string GetPieceSymbol(ChessPiece piece)
+    {
+        return (piece.Color, piece) switch
+        {
+            (PieceColor.White, King) => "♔",
+            (PieceColor.White, Queen) => "♕",
+            (PieceColor.White, Rook) => "♖",
+            (PieceColor.White, Bishop) => "♗",
+            (PieceColor.White, Knight) => "♘",
+            (PieceColor.White, Pawn) => "♙",
+
+            (PieceColor.Black, King) => "♚",
+            (PieceColor.Black, Queen) => "♛",
+            (PieceColor.Black, Rook) => "♜",
+            (PieceColor.Black, Bishop) => "♝",
+            (PieceColor.Black, Knight) => "♞",
+            (PieceColor.Black, Pawn) => "♟",
+
+            // (PieceColor.White, King) => "🤴",
+            // (PieceColor.White, Queen) => "👸",
+            // (PieceColor.White, Rook) => "🏰",
+            // (PieceColor.White, Bishop) => "🤺",
+            // (PieceColor.White, Knight) => "🏇",
+            // (PieceColor.White, Pawn) => "👮",
+
+            // (PieceColor.Black, King) => "🦀",
+            // (PieceColor.Black, Queen) => "🦞",
+            // (PieceColor.Black, Rook) => "🐙",
+            // (PieceColor.Black, Bishop) => "🦑",
+            // (PieceColor.Black, Knight) => "🦐",
+            // (PieceColor.Black, Pawn) => "🍤",
+
+            _ => string.Empty
+        };
+    }
+}
