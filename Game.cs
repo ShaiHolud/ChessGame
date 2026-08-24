@@ -419,6 +419,15 @@ namespace ChessGame.Core
                     $"Пат. Ход {CurrentTurn}.");
             }
 
+            if (IsDrawByInsufficientMaterial())
+            {
+                State = GameState.Draw;
+
+                return new GameEvent(
+                    GameEventType.Draw,
+                    "Ничья из-за недостаточного материала.");
+            }
+
             if (GetCurrentPositionRepetitionCount() >= 3)
             {
                 State = GameState.Draw;
@@ -586,23 +595,38 @@ namespace ChessGame.Core
 
         public bool IsDrawByInsufficientMaterial()
         {
-            IEnumerable<ChessPiece> pieces = GetAllPieces();
+            IReadOnlyCollection<ChessPiece> pieces =
+                GetAllPieces().ToList();
 
-            int nonKingPieces =
-                pieces.Count(piece => piece is not King);
+            IReadOnlyCollection<ChessPiece> nonKings =
+                pieces
+                    .Where(piece => piece is not King)
+                    .ToList();
 
-            if (nonKingPieces == 0)
+            if (nonKings.Count == 0)
                 return true;
 
-            if (nonKingPieces == 1)
+            if (nonKings.Count == 1)
             {
-                return pieces.Any(
+                return nonKings.First() is Bishop or Knight;
+            }
+
+            if (nonKings.All(piece => piece is Bishop))
+            {
+                bool firstColor =  IsDarkSquare(nonKings.First().Position);
+
+                return nonKings.All(
                     piece =>
-                        piece is Bishop ||
-                        piece is Knight);
+                        IsDarkSquare(piece.Position) == firstColor);
             }
 
             return false;
+        }
+
+        private static bool IsDarkSquare(Position position)
+        {
+            return
+                (position.Row + position.Column) % 2 == 0;
         }
 
         private string GetPositionKey()
