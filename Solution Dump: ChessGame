@@ -1,0 +1,4905 @@
+# Solution Dump: ChessGame_New
+Сгенерировано: 2026-09-02 11:22
+
+## Структура проекта
+``
+  - ChessGame.ApiClient/
+    - bin/
+    - obj/
+    - Services/
+  - ChessGame.Application/
+    - bin/
+    - Games/
+    - obj/
+  - ChessGame.Contracts/
+    - bin/
+    - Dto/
+    - obj/
+  - ChessGame.Core/
+    - .github/
+      - workflows/
+    - bin/
+    - Events/
+    - Factories/
+    - Model/
+    - Movement/
+    - obj/
+    - Pieces/
+    - Results/
+    - Setup/
+  - ChessGame.Server/
+    - bin/
+    - Controllers/
+    - Models/
+    - obj/
+    - Properties/
+    - Services/
+  - ChessGame.Web/
+    - bin/
+    - Components/
+      - Layout/
+      - Pages/
+    - Models/
+    - obj/
+    - Pages/
+    - Properties/
+    - wwwroot/
+      - css/
+      - pieces/
+``
+
+## Содержимое файлов
+
+### ChessGame.ApiClient\ChessGame.ApiClient.csproj
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Net.Http.Json" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ChessGame.Contracts\ChessGame.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>
+
+```
+
+### ChessGame.ApiClient\Services\ChessGameApiClient.cs
+```csharp
+using ChessGame.Contracts.Dto;
+using System.Net.Http.Json;
+
+namespace ChessGame.ApiClient.Services
+{
+
+    public sealed class ChessGameApiClient : IChessGameApiClient
+    {
+        private readonly HttpClient _httpClient;
+
+        public Guid? GameId { get; private set; }
+        public GameDto? Game { get; private set; }
+
+        public ChessGameApiClient(HttpClient httpClient)
+        {
+            _httpClient = httpClient;
+        }
+
+        public async Task<GameDto> NewGameAsync()
+        {
+            HttpResponseMessage response = await _httpClient.PostAsync("api/games", null);
+            response.EnsureSuccessStatusCode();
+
+            GameDto game = await response.Content.ReadFromJsonAsync<GameDto>()
+                ?? throw new InvalidOperationException("Server returned empty game.");
+
+            GameId = game.Id;
+            Game = game;
+
+            return game;
+        }
+
+        public async Task<GameDto> LoadGameAsync(Guid gameId)
+        {
+            GameDto game = await _httpClient.GetFromJsonAsync<GameDto>($"api/games/{gameId}")
+                ?? throw new InvalidOperationException("Server returned empty game.");
+
+            GameId = game.Id;
+            Game = game;
+
+            return game;
+        }
+
+        public async Task<MoveResultDto> MoveAsync(MoveDto move)
+        {
+            EnsureGame();
+
+            MoveResultDto result = await PostAsync<MoveDto, MoveResultDto>($"api/games/{GameId}/move", move);
+
+            // Обновляем состояние игры после хода
+            await LoadGameAsync(GameId!.Value);
+
+            return result;
+        }
+
+        public async Task<GameDto> UndoAsync()
+        {
+            EnsureGame();
+
+            GameDto game = await PostAsync<object, GameDto>($"api/games/{GameId}/undo", new { });
+            Game = game;
+
+            return game;
+        }
+
+        public async Task<IReadOnlyCollection<PositionDto>> GetLegalMovesAsync(PositionDto position)
+        {
+            EnsureGame();
+            Console.WriteLine($"GetLegalMovesAsync: GameId={GameId}, square={ToSquare(position)}");
+
+            PositionDto[] moves = await GetFromJsonAsync<PositionDto[]>($"api/games/{GameId}/legalmoves/{ToSquare(position)}");
+            return moves;
+        }
+
+        public async Task DeleteGameAsync()
+        {
+            EnsureGame();
+
+            HttpResponseMessage response = await _httpClient.DeleteAsync($"api/games/{GameId}");
+            response.EnsureSuccessStatusCode();
+
+            GameId = null;
+            Game = null;
+        }
+
+        private async Task<TResponse> PostAsync<TRequest, TResponse>(string url, TRequest request)
+        {
+            HttpResponseMessage response = await _httpClient.PostAsJsonAsync(url, request);
+            response.EnsureSuccessStatusCode();
+
+            return await response.Content.ReadFromJsonAsync<TResponse>()
+                ?? throw new InvalidOperationException("Server returned empty response.");
+        }
+
+        private async Task<TResponse> GetFromJsonAsync<TResponse>(string url)
+        {
+            return await _httpClient.GetFromJsonAsync<TResponse>(url)
+                ?? throw new InvalidOperationException("Server returned empty response.");
+        }
+
+        private static string ToSquare(PositionDto position)
+        {
+            char file = (char)('a' + position.Column);
+            int rank = position.Row + 1;
+            return $"{file}{rank}";
+        }
+
+        private void EnsureGame()
+        {
+            if (GameId == null)
+            {
+                throw new InvalidOperationException("Game has not been created.");
+            }
+        }
+    }
+}
+```
+
+### ChessGame.ApiClient\Services\IChessGameApiClient.cs
+```csharp
+using ChessGame.Contracts.Dto;
+
+namespace ChessGame.ApiClient.Services
+{
+
+    public interface IChessGameApiClient
+    {
+        Guid? GameId { get; }
+        GameDto? Game { get; }
+
+        Task<GameDto> NewGameAsync();
+        Task<GameDto> LoadGameAsync(Guid gameId);
+        Task<MoveResultDto> MoveAsync(MoveDto move);
+        Task<GameDto> UndoAsync();
+        Task<IReadOnlyCollection<PositionDto>> GetLegalMovesAsync(PositionDto position);
+        Task DeleteGameAsync();
+    }
+}
+```
+
+### ChessGame.Application\ChessGame.Application.csproj
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Net.Http.Json" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ChessGame.Contracts\ChessGame.Contracts.csproj" />
+    <ProjectReference Include="..\ChessGame.Core\ChessGame.Core.csproj" />
+  </ItemGroup>
+
+</Project>
+
+```
+
+### ChessGame.Application\Games\ChessGameService.cs
+```csharp
+using ChessGame.Contracts.Dto;
+using ChessGame.Core;
+using ChessGame.Core.Events;
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+using ChessGame.Core.Results;
+
+namespace ChessGame.Application.Games
+{
+    public sealed class ChessGameService : IChessGameService
+    {
+        private readonly GameManager _gameManager;
+
+        public ChessGameService(GameManager gameManager)
+        {
+            _gameManager = gameManager;
+        }
+
+        public GameDto CreateGame()
+        {
+            GameSession session =
+                _gameManager.CreateGame();
+
+            return MapGame(
+                session.Id,
+                session.Game);
+        }
+
+        public GameDto GetGame(Guid gameId)
+        {
+            GameSession session =
+                GetRequiredGame(gameId);
+
+            return MapGame(
+                session.Id,
+                session.Game);
+        }
+
+        public MoveResultDto MakeMove(Guid gameId, MoveDto moveDto)
+        {
+            GameSession session =
+                GetRequiredGame(gameId);
+
+            Move move =
+                MapMove(moveDto);
+
+            MoveResult result =
+                session.Game.Move(move);
+
+            session.LastActivity =
+                DateTime.UtcNow;
+
+            return MapMoveResult(result);
+        }
+
+        public GameDto UndoMove(Guid gameId)
+        {
+            GameSession session =
+                GetRequiredGame(gameId);
+
+            session.Game.Undo();
+
+            session.LastActivity =
+                DateTime.UtcNow;
+
+            return MapGame(
+                session.Id,
+                session.Game);
+        }
+
+        public IReadOnlyCollection<PositionDto> GetLegalMoves(Guid gameId, PositionDto positionDto)
+        {
+            GameSession session =
+                GetRequiredGame(gameId);
+
+            Position position = new(
+                positionDto.Row,
+                positionDto.Column);
+
+            return session.Game
+                .GetLegalMoves(position)
+                .Select(move =>
+                    new PositionDto(
+                        move.To.Row,
+                        move.To.Column))
+                .ToArray();
+        }
+
+        public bool DeleteGame(Guid gameId)
+        {
+            return _gameManager.Remove(gameId);
+        }
+
+        public IReadOnlyCollection<GameInfoDto> GetGames()
+        {
+            return _gameManager
+                .GetAll()
+                .Select(session => new GameInfoDto
+                {
+                    Id = session.Id,
+
+                    CurrentTurn =
+                        session.Game.CurrentTurn.ToString(),
+
+                    LastActivity =
+                        session.LastActivity,
+
+                    WhitePieces =
+                        session.Game
+                            .GetPieces(PieceColor.White)
+                            .Count(),
+
+                    BlackPieces =
+                        session.Game
+                            .GetPieces(PieceColor.Black)
+                            .Count(),
+
+                    Finished =
+                        session.Game.IsFinished,
+
+                    State =
+                        session.Game.State.ToString()
+                })
+                .ToArray();
+        }
+
+        private GameSession GetRequiredGame(Guid gameId)
+        {
+            GameSession? session =
+                _gameManager.Get(gameId);
+
+            if (session == null)
+            {
+                throw new KeyNotFoundException(
+                    $"Game '{gameId}' was not found.");
+            }
+
+            return session;
+        }
+
+        // ============================================================
+        // Mapping: Application DTO -> Core
+        // ============================================================
+
+        private static Move MapMove(MoveDto dto)
+        {
+            Position from = new(
+                dto.From.Row,
+                dto.From.Column);
+
+            Position to = new(
+                dto.To.Row,
+                dto.To.Column);
+
+            PromotionPiece? promotion =
+                ParsePromotion(dto.Promotion);
+
+            return new Move(
+                from,
+                to,
+                promotion);
+        }
+
+        private static PromotionPiece? ParsePromotion(string? promotion)
+        {
+            if (string.IsNullOrWhiteSpace(promotion))
+            {
+                return null;
+            }
+
+            return promotion.ToUpperInvariant() switch
+            {
+                "Q" or "QUEEN" =>
+                    PromotionPiece.Queen,
+
+                "R" or "ROOK" =>
+                    PromotionPiece.Rook,
+
+                "B" or "BISHOP" =>
+                    PromotionPiece.Bishop,
+
+                "N" or "KNIGHT" =>
+                    PromotionPiece.Knight,
+
+                _ => throw new ArgumentException(
+                    $"Unknown promotion piece '{promotion}'.")
+            };
+        }
+
+        // ============================================================
+        // Mapping: Core -> Application DTO
+        // ============================================================
+
+        private static GameDto MapGame(Guid gameId, Game game)
+        {
+            IReadOnlyCollection<PieceDto> pieces =
+                game.GetAllPieces()
+                    .Select(MapPiece)
+                    .ToArray();
+
+            IReadOnlyCollection<MoveRecordDto> moves =
+                game.MoveRecords
+                    .Select(MapMoveRecord)
+                    .ToArray();
+
+            return new GameDto(
+                gameId,
+                game.CurrentTurn.ToString(),
+                game.State.ToString(),
+                game.IsFinished,
+                game.State == GameState.Check,
+                game.State == GameState.Checkmate,
+                game.State == GameState.Stalemate,
+                game.State == GameState.Draw,
+                pieces,
+                moves);
+        }
+
+        private static PieceDto MapPiece(ChessPiece piece)
+        {
+            return new PieceDto(
+                piece.GetType().Name,
+                piece.Color.ToString(),
+                new PositionDto(
+                    piece.Position.Row,
+                    piece.Position.Column));
+        }
+
+        private static MoveRecordDto MapMoveRecord(MoveRecord record)
+        {
+            return new MoveRecordDto(
+                MapMove(record.Move),
+                record.Notation);
+        }
+
+        private static MoveDto MapMove(Move move)
+        {
+            return new MoveDto(
+                new PositionDto(
+                    move.From.Row,
+                    move.From.Column),
+
+                new PositionDto(
+                    move.To.Row,
+                    move.To.Column),
+
+                move.Promotion?.ToString());
+        }
+
+        private static MoveResultDto MapMoveResult(MoveResult result)
+        {
+            IReadOnlyCollection<GameEventDto> events =
+                result.Events
+                    .Select(MapEvent)
+                    .ToArray();
+
+            MoveDto? move = null;
+
+            if (result.Move is Move coreMove)
+            {
+                move = MapMove(coreMove);
+            }
+
+            return new MoveResultDto(
+                result.Success,
+                move,
+                result.San,
+                result.State.ToString(),
+                result.CurrentTurn.ToString(),
+                result.Check,
+                result.Checkmate,
+                result.Stalemate,
+                result.Draw,
+                events);
+        }
+
+        private static GameEventDto MapEvent(GameEvent gameEvent)
+        {
+            return new GameEventDto(
+                gameEvent.Type.ToString(),
+                gameEvent.Message);
+        }
+    }
+}
+```
+
+### ChessGame.Application\Games\GameManager.cs
+```csharp
+using ChessGame.Core.Setup;
+using ChessGame.Core;
+
+namespace ChessGame.Application.Games
+{
+    public sealed class GameManager
+    {
+        private readonly Dictionary<Guid, GameSession> _games = [];
+
+        public GameSession CreateGame()
+        {
+            return CreateGame(
+                InitialBoardFactory.Create());
+        }
+
+        public GameSession CreateGame(Board board)
+        {
+            Game game = new(board);
+
+            GameSession session = new(
+                Guid.NewGuid(),
+                game);
+
+            _games.Add(
+                session.Id,
+                session);
+
+            return session;
+        }
+
+        public GameSession? Get(Guid id)
+        {
+            _games.TryGetValue(
+                id,
+                out GameSession? session);
+
+            return session;
+        }
+
+        public bool Remove(Guid id)
+        {
+            return _games.Remove(id);
+        }
+
+        public IReadOnlyCollection<GameSession> GetAll()
+        {
+            return _games.Values;
+        }
+    }
+}
+
+```
+
+### ChessGame.Application\Games\GameSession.cs
+```csharp
+using ChessGame.Core;
+
+namespace ChessGame.Application.Games
+{
+    public sealed class GameSession
+    {
+        public Guid Id { get; }
+
+        public Game Game { get; }
+
+        public DateTime Created { get; }
+
+        public DateTime LastActivity { get; set; }
+
+        public GameSession(
+            Guid id,
+            Game game)
+        {
+            Id = id;
+            Game = game;
+
+            Created = DateTime.UtcNow;
+            LastActivity = Created;
+        }
+    }
+}
+
+```
+
+### ChessGame.Application\Games\IChessGameService.cs
+```csharp
+using ChessGame.Contracts.Dto;
+
+namespace ChessGame.Application.Games
+{
+    public interface IChessGameService
+    {
+        GameDto CreateGame();
+
+        GameDto GetGame(Guid gameId);
+
+        MoveResultDto MakeMove(Guid gameId, MoveDto move);
+
+        GameDto UndoMove(Guid gameId);
+
+        IReadOnlyCollection<PositionDto> GetLegalMoves(Guid gameId, PositionDto positionDto);
+
+        bool DeleteGame(Guid gameId);
+
+        IReadOnlyCollection<GameInfoDto> GetGames();
+    }
+}
+
+```
+
+### ChessGame.Contracts\ChessGame.Contracts.csproj
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ChessGame.Core\ChessGame.Core.csproj" />
+  </ItemGroup>
+
+</Project>
+
+```
+
+### ChessGame.Contracts\Dto\GameDto.cs
+```csharp
+namespace ChessGame.Contracts.Dto
+{
+    public sealed record GameDto(
+    Guid Id,
+    string CurrentTurn,
+    string State,
+    bool Finished,
+    bool Check,
+    bool Checkmate,
+    bool Stalemate,
+    bool Draw,
+    IReadOnlyCollection<PieceDto> Pieces,
+    IReadOnlyCollection<MoveRecordDto> Moves);
+}
+
+```
+
+### ChessGame.Contracts\Dto\GameEventDto.cs
+```csharp
+namespace ChessGame.Contracts.Dto
+{
+    public sealed record GameEventDto(
+        string Type,
+        string Message);
+}
+```
+
+### ChessGame.Contracts\Dto\GameInfoDto.cs
+```csharp
+namespace ChessGame.Contracts.Dto
+{
+    public sealed class GameInfoDto
+    {
+        public Guid Id { get; init; }
+
+        public string CurrentTurn { get; init; } = "";
+
+        public DateTime LastActivity { get; init; }
+
+        public int WhitePieces { get; init; }
+
+        public int BlackPieces { get; init; }
+
+        public bool Finished { get; init; }
+
+        public string State { get; init; } = string.Empty;
+    }
+}
+
+```
+
+### ChessGame.Contracts\Dto\MoveDto.cs
+```csharp
+namespace ChessGame.Contracts.Dto
+{
+    public sealed record MoveDto(
+        PositionDto From,
+        PositionDto To,
+        string? Promotion = null);
+}
+
+```
+
+### ChessGame.Contracts\Dto\MoveRecordDto.cs
+```csharp
+namespace ChessGame.Contracts.Dto
+{
+    public sealed record MoveRecordDto(
+        MoveDto Move,
+        string San);
+}
+
+```
+
+### ChessGame.Contracts\Dto\MoveResponse.cs
+```csharp
+namespace ChessGame.Contracts.Dto;
+
+public sealed class MoveResponse
+{
+    public bool Success { get; init; }
+
+    public string? Error { get; init; }
+
+    public List<GameEventDto> Events { get; init; } = [];
+
+    public bool Check { get; init; }
+
+    public bool Checkmate { get; init; }
+
+    public bool Stalemate { get; init; }
+
+    public bool Draw { get; init; }
+}
+```
+
+### ChessGame.Contracts\Dto\MoveResultDto.cs
+```csharp
+namespace ChessGame.Contracts.Dto
+{
+    public sealed record MoveResultDto(
+    bool Success,
+    MoveDto? Move,
+    string? San,
+    string State,
+    string CurrentTurn,
+    bool Check,
+    bool Checkmate,
+    bool Stalemate,
+    bool Draw,
+    IReadOnlyCollection<GameEventDto> Events);
+}
+
+```
+
+### ChessGame.Contracts\Dto\PieceDto.cs
+```csharp
+namespace ChessGame.Contracts.Dto
+{
+    public sealed record PieceDto(
+    string Type,
+    string Color,
+    PositionDto Position);
+}
+
+```
+
+### ChessGame.Contracts\Dto\PositionDto.cs
+```csharp
+namespace ChessGame.Contracts.Dto
+{
+    public sealed record PositionDto(
+        int Row,
+        int Column);
+}
+```
+
+### ChessGame.Core\Board.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core
+{
+    public class Board
+    {
+        private readonly ChessPiece?[,] _cells = new ChessPiece?[8, 8];
+
+        public void AddPiece(ChessPiece piece)
+        {
+            Position position = piece.Position;
+            if (!Contains(position))
+                throw new InvalidOperationException(
+                    $"Невозможно добавить фигуру {piece.ColorCode}{piece.ShortName} в позицию {position}.");
+
+            _cells[position.Row, position.Column] = piece;
+        }
+
+        public ChessPiece? GetPiece(Position position)
+        {
+            return _cells[position.Row, position.Column];
+        }
+
+        public void RemovePiece(Position position)
+        {
+            _cells[position.Row, position.Column] = null;
+        }
+
+        internal MoveState MovePiece(Move move)
+        {
+            ChessPiece? piece = GetPiece(move.From);
+            ChessPiece? capturedPiece = GetPiece(move.To);
+
+            if (piece == null)
+                throw new InvalidOperationException("Фигура не найдена.");
+
+            MoveState state = new()
+            {
+                Piece = piece,
+                From = move.From,
+                To = move.To,
+
+                PreviousMoveCount = piece.MoveCount,
+
+                CapturedPiece = capturedPiece,
+
+                CapturedPiecePosition = capturedPiece?.Position ?? default,
+
+                CapturedPiecePreviousMoveCount = capturedPiece?.MoveCount ?? 0
+            };
+
+            if (capturedPiece != null)
+            {
+                capturedPiece.Capture();
+                RemovePiece(move.To);
+            }
+
+            RemovePiece(move.From);
+
+            piece.MoveTo(move.To);
+
+            AddPiece(piece);
+
+            return state;
+        }
+
+        internal void UndoMove(MoveState state)
+        {
+            // Удаляем основную фигуру с конечной клетки
+            RemovePiece(state.To);
+
+            // Возвращаем ходившую фигуру
+            state.Piece.Restore(
+                state.From,
+                state.PreviousMoveCount,
+                true);
+
+            AddPiece(state.Piece);
+
+            // Возвращаем взятую фигуру
+            if (state.CapturedPiece != null)
+            {
+                state.CapturedPiece.Restore(
+                    state.CapturedPiecePosition,
+                    state.CapturedPiecePreviousMoveCount,
+                    true);
+
+                AddPiece(state.CapturedPiece);
+            }
+
+            // Если была рокировка — возвращаем ладью
+            if (state.SecondaryPiece != null &&
+                state.SecondaryFrom != null &&
+                state.SecondaryTo != null &&
+                state.SecondaryPreviousMoveCount != null)
+            {
+                RemovePiece(state.SecondaryTo.Value);
+
+                state.SecondaryPiece.Restore(
+                    state.SecondaryFrom.Value,
+                    state.SecondaryPreviousMoveCount.Value,
+                    true);
+
+                AddPiece(state.SecondaryPiece);
+            }
+        }
+
+        public bool IsCellFree(Position position)
+        {
+            return _cells[position.Row, position.Column] == null;
+        }
+
+        public bool Contains(Position position)
+        {
+            return position.Row >= 0 &&
+                   position.Row < _cells.GetLength(0) &&
+                   position.Column >= 0 &&
+                   position.Column < _cells.GetLength(1);
+        }
+
+        public bool CanMoveTo(ChessPiece piece, Position position)
+        {
+            if (!Contains(position))
+                return false;
+
+            ChessPiece? target = GetPiece(position);
+
+            if (target == null)
+                return true;
+
+            return target.Color != piece.Color;
+        }
+
+        public override string ToString()
+        {
+            var sb = new System.Text.StringBuilder();
+
+            for (int row = 7; row >= 0; row--)
+            {
+                sb.Append(row + 1).Append(' ');
+                for (int column = 0; column < 8; column++)
+                {
+                    ChessPiece? piece = GetPiece(new Position(row, column));
+                    if (piece == null)
+                        sb.Append(".. ");
+                    else
+                        sb.Append(piece.ColorCode).Append(piece.ShortName).Append(' ');
+                }
+                sb.AppendLine();
+            }
+
+            sb.Append("  ");
+            for (int column = 0; column < 8; column++)
+                sb.Append((char)('a' + column)).Append("  ");
+            sb.AppendLine();
+
+            return sb.ToString();
+        }
+
+        public IEnumerable<ChessPiece> GetPieces(PieceColor color)
+        {
+            foreach (ChessPiece? piece in _cells)
+            {
+                if (piece != null && piece.Color == color)
+                    yield return piece;
+            }
+        }
+
+        public King GetKing(PieceColor color)
+        {
+            foreach (ChessPiece piece in GetPieces(color))
+            {
+                if (piece is King king)
+                    return king;
+            }
+
+            throw new InvalidOperationException($"Король цвета {color} не найден на доске.");
+        }
+
+        internal MoveState MoveEnPassant(Move move, Pawn capturedPawn)
+        {
+            ChessPiece? piece = GetPiece(move.From);
+
+            if (piece == null)
+                throw new InvalidOperationException("Фигура не найдена.");
+
+            MoveState state = new()
+            {
+                Piece = piece,
+                From = move.From,
+                To = move.To,
+                PreviousMoveCount = piece.MoveCount,
+
+                CapturedPiece = capturedPawn,
+                CapturedPiecePosition = capturedPawn.Position,
+                CapturedPiecePreviousMoveCount = capturedPawn.MoveCount
+            };
+
+            RemovePiece(capturedPawn.Position);
+            capturedPawn.Capture();
+
+            RemovePiece(move.From);
+
+            piece.MoveTo(move.To);
+
+            AddPiece(piece);
+
+            return state;
+        }
+
+        internal MoveState MoveCastle(Move move, CastleInfo castleInfo)
+        {
+            MoveState kingState = MovePiece(move);
+            MoveState rookState = MovePiece(
+                new Move(
+                    castleInfo.RookFrom,
+                    castleInfo.RookTo));
+
+            return kingState with
+            {
+                SecondaryPiece = rookState.Piece,
+                SecondaryFrom = rookState.From,
+                SecondaryTo = rookState.To,
+                SecondaryPreviousMoveCount = rookState.PreviousMoveCount,
+            };
+        }
+    }
+}
+```
+
+### ChessGame.Core\ChessGame.Core.csproj
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
+
+```
+
+### ChessGame.Core\Events\GameEvent.cs
+```csharp
+namespace ChessGame.Core.Events;
+
+public sealed record GameEvent(
+    GameEventType Type,
+    string? Message = null);
+```
+
+### ChessGame.Core\Events\GameEventType.cs
+```csharp
+namespace ChessGame.Core.Events
+{
+    public enum GameEventType
+    {
+        Capture,
+        Check,
+        Checkmate,
+        Stalemate,
+        Castle,
+        Promotion,
+        EnPassant,
+        Draw
+    }
+}
+
+```
+
+### ChessGame.Core\Factories\PromotionPieceFactory.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core.Factories
+{
+    public static class PromotionPieceFactory
+    {
+        public static ChessPiece Create(
+            PieceColor color,
+            Position position,
+            PromotionPiece promotionPiece)
+        {
+            return promotionPiece switch
+            {
+                PromotionPiece.Queen =>
+                    new Queen(color, position),
+
+                PromotionPiece.Rook =>
+                    new Rook(color, position),
+
+                PromotionPiece.Bishop =>
+                    new Bishop(color, position),
+
+                PromotionPiece.Knight =>
+                    new Knight(color, position),
+
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(promotionPiece),
+                    promotionPiece,
+                    null)
+            };
+        }
+    }
+}
+```
+
+### ChessGame.Core\Game.cs
+```csharp
+using ChessGame.Core.Events;
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+using ChessGame.Core.Results;
+using ChessGame.Core.Factories;
+
+namespace ChessGame.Core
+{
+    public class Game
+    {
+        private readonly Board _board;
+
+        private readonly Stack<MoveState> _history = [];
+
+        private readonly List<Move> _moveHistory = [];
+
+        private readonly List<MoveRecord> _moveRecords = new();
+
+        public IReadOnlyList<MoveRecord> MoveRecords => _moveRecords;
+
+        private readonly Stack<GameState> _stateHistory = new();
+
+        private readonly Stack<int> _halfMoveClockHistory = new();
+
+        private readonly Dictionary<string, int> _positionHistory = [];
+
+        public int HalfMoveClock { get; private set; }
+
+        public GameState State { get; private set; } = GameState.Normal;
+
+        public bool IsFinished => State is GameState.Checkmate or GameState.Stalemate or GameState.Draw;
+
+        public IReadOnlyList<Move> MoveHistory => _moveHistory;
+
+        public Move? LastMove { get; private set; }
+
+        public Game(Board board)
+        {
+            _board = board;
+
+            _positionHistory[GetPositionKey()] = 1;
+        }
+
+        public PieceColor CurrentTurn { get; private set; } = PieceColor.White;
+
+        public MoveResult Move(Move move)
+        {
+            if (IsFinished)
+            {
+                throw new InvalidOperationException(
+                    "The match is over.");
+            }
+
+            ChessPiece? piece =
+                _board.GetPiece(move.From);
+
+            if (piece == null)
+            {
+                throw new InvalidOperationException(
+                    "Piece not found.");
+            }
+
+            if (piece.Color != CurrentTurn)
+            {
+                throw new InvalidOperationException(
+                    "It's another player's turn.");
+            }
+
+            // ============================================================
+            // СНАЧАЛА проверяем, что ход есть среди легальных
+            // ============================================================
+
+            string notation = CreateMoveNotation(move);
+
+            IReadOnlyCollection<Move> legalMoves =  GetLegalMoves(move.From);
+
+            bool isLegalMove =
+                legalMoves.Any(
+                    legalMove =>
+                        legalMove.From == move.From &&
+                        legalMove.To == move.To);
+
+            if (!isLegalMove)
+            {
+                throw new InvalidOperationException(
+                    $"Invalid move {move}.");
+            }
+
+            MoveResult result = new MoveResult
+            {
+                Success = true
+            };
+
+            // SAN вычисляем ДО изменения доски
+
+            // ============================================================
+            // РОКИРОВКА
+            // ============================================================
+
+            if (IsCastle(move, out CastleInfo castleInfo))
+            {
+                MoveState state =
+                    _board.MoveCastle(
+                        move,
+                        castleInfo);
+
+                _stateHistory.Push(State);
+                _halfMoveClockHistory.Push(HalfMoveClock);
+                _history.Push(state);
+
+                _moveHistory.Add(move);
+
+                result.Events.Add(
+                    new GameEvent(
+                        GameEventType.Castle,
+                        "Castle"));
+
+                LastMove = move;
+
+                HalfMoveClock++;
+
+                CompleteMove(result);
+
+                notation = AddCheckNotation(notation);
+
+                _moveRecords.Add(
+                    new MoveRecord(
+                        move,
+                        notation));
+
+                result.Move = move;
+                result.San = notation;
+                result.State = State;
+                result.CurrentTurn = CurrentTurn;
+
+                return result;
+            }
+
+            // ============================================================
+            // ВЗЯТИЕ НА ПРОХОДЕ
+            // ============================================================
+
+            if (IsEnPassant(
+                move,
+                out Pawn enemyPawn))
+            {
+                MoveState state =
+                    _board.MoveEnPassant(
+                        move,
+                        enemyPawn);
+
+                _stateHistory.Push(State);
+                _halfMoveClockHistory.Push(HalfMoveClock);
+                _history.Push(state);
+
+                _moveHistory.Add(move);
+
+                result.Events.Add(
+                    new GameEvent(
+                        GameEventType.EnPassant,
+                        $"{piece.Color} Pawn captures " +
+                        $"{enemyPawn.Color} Pawn en passant"));
+
+                LastMove = move;
+
+                HalfMoveClock = 0;
+
+                CompleteMove(result);
+
+                notation = AddCheckNotation(notation);
+
+                _moveRecords.Add(
+                    new MoveRecord(
+                        move,
+                        notation));
+
+                result.Move = move;
+                result.San = notation;
+                result.State = State;
+                result.CurrentTurn = CurrentTurn;
+
+                return result;
+            }
+
+            // ============================================================
+            // ОБЫЧНЫЙ ХОД
+            // ============================================================
+
+            MoveState normalMoveState =
+                _board.MovePiece(move);
+
+            _stateHistory.Push(State);
+            _halfMoveClockHistory.Push(HalfMoveClock);
+            _history.Push(normalMoveState);
+
+            _moveHistory.Add(move);
+
+            if (normalMoveState.CapturedPiece != null)
+            {
+                result.Events.Add(
+                    new GameEvent(
+                        GameEventType.Capture,
+                        $"{piece.Color} " +
+                        $"{piece.GetType().Name} " +
+                        $"{move.From} captures " +
+                        $"{normalMoveState.CapturedPiece.Color} " +
+                        $"{normalMoveState.CapturedPiece.GetType().Name}"));
+            }
+
+            GameEvent? promotion =
+                TryPromotePawn(
+                    move.To,
+                    move.Promotion ??
+                    PromotionPiece.Queen);
+
+            if (promotion != null)
+            {
+                result.Events.Add(promotion);
+            }
+
+            LastMove = move;
+
+            if (piece is Pawn ||
+                normalMoveState.CapturedPiece != null)
+            {
+                HalfMoveClock = 0;
+            }
+            else
+            {
+                HalfMoveClock++;
+            }
+
+            CompleteMove(result);
+
+            notation = AddCheckNotation(notation);
+
+            _moveRecords.Add(
+                new MoveRecord(
+                    move,
+                    notation));
+
+            result.Move = move;
+            result.San = notation;
+            result.State = State;
+            result.CurrentTurn = CurrentTurn;
+
+            return result;
+        }
+
+        public MoveResult Move(string from, string to)
+        {
+            return Move(
+                new Move(
+                    Position.Parse(from),
+                    Position.Parse(to)));
+        }
+
+        public IReadOnlyCollection<Move> GetPossibleMoves(Position position)
+        {
+            ChessPiece? piece = _board.GetPiece(position);
+
+            if (piece == null)
+                return [];
+
+            return piece
+                .GetPossibleMoves(_board)
+                .Select(to => new Move(position, to))
+                .ToList();
+        }
+
+        public IReadOnlyCollection<Move> GetPossibleMoves(string position)
+        {
+            return GetPossibleMoves(Position.Parse(position));
+        }
+
+        public bool IsCheck(PieceColor color)
+        {
+            return IsCheck(_board, color);
+        }
+
+        private static bool IsCheck(Board board, PieceColor color)
+        {
+            King king = board.GetKing(color);
+            PieceColor opponentColor = color == PieceColor.White ? PieceColor.Black : PieceColor.White;
+
+            foreach (ChessPiece piece in board.GetPieces(opponentColor))
+            {
+                if (piece.GetPossibleMoves(board).Contains(king.Position))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Возвращает все легальные ходы фигуры.
+        /// Легальным считается ход, после которого собственный король
+        /// не находится под шахом.
+        /// </summary>
+        /// <param name="position">
+        /// Позиция фигуры.
+        /// </param>
+        /// <returns>
+        /// Коллекция разрешённых ходов.
+        /// </returns>
+        public IReadOnlyCollection<Move> GetLegalMoves(Position position)
+        {
+            ChessPiece? piece =
+                _board.GetPiece(position);
+
+            if (piece == null)
+                return [];
+
+            List<Move> legalMoves = [];
+
+            // ============================================================
+            // ОБЫЧНЫЕ ХОДЫ
+            // ============================================================
+
+            IReadOnlyCollection<Position> possibleMoves =
+                piece.GetPossibleMoves(_board);
+
+            foreach (Position to in possibleMoves)
+            {
+                Move move =
+                    new(position, to);
+
+                MoveState state =
+                    _board.MovePiece(move);
+
+                bool check =
+                    IsCheck(piece.Color);
+
+                _board.UndoMove(state);
+
+                if (!check)
+                {
+                    legalMoves.Add(move);
+                }
+            }
+
+            // ============================================================
+            // РОКИРОВКА
+            // ============================================================
+
+            if (piece is King)
+            {
+                Move kingSideCastle =
+                    new(
+                        position,
+                        new Position(
+                            position.Row,
+                            position.Column + 2));
+
+                if (IsCastle(
+                    kingSideCastle,
+                    out _))
+                {
+                    legalMoves.Add(
+                        kingSideCastle);
+                }
+
+                Move queenSideCastle =
+                    new(
+                        position,
+                        new Position(
+                            position.Row,
+                            position.Column - 2));
+
+                if (IsCastle(
+                    queenSideCastle,
+                    out _))
+                {
+                    legalMoves.Add(
+                        queenSideCastle);
+                }
+            }
+
+            // ============================================================
+            // ВЗЯТИЕ НА ПРОХОДЕ
+            // ============================================================
+
+            if (piece is Pawn pawn)
+            {
+                int direction =
+                    pawn.Color == PieceColor.White
+                        ? 1
+                        : -1;
+
+                foreach (int columnOffset in new[] { -1, 1 })
+                {
+                    int targetColumn =
+                        position.Column + columnOffset;
+
+                    if (targetColumn < 0 ||
+                        targetColumn > 7)
+                    {
+                        continue;
+                    }
+
+                    Position target =
+                        new(
+                            position.Row + direction,
+                            targetColumn);
+
+                    Move enPassantMove =
+                        new(
+                            position,
+                            target);
+
+                    if (IsEnPassant(
+                        enPassantMove,
+                        out Pawn capturedPawn))
+                    {
+                        MoveState state =
+                            _board.MoveEnPassant(
+                                enPassantMove,
+                                capturedPawn);
+
+                        bool check =
+                            IsCheck(pawn.Color);
+
+                        _board.UndoMove(state);
+
+                        if (!check)
+                        {
+                            legalMoves.Add(
+                                enPassantMove);
+                        }
+                    }
+                }
+            }
+
+            return legalMoves;
+        }
+
+        public bool HasLegalMoves(PieceColor color)
+        {
+            foreach (ChessPiece piece in _board.GetPieces(color))
+            {
+                if (GetLegalMoves(piece.Position).Count > 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        public bool IsCheckmate(PieceColor color)
+        {
+            return IsCheck(color)
+                && !HasLegalMoves(color);
+        }
+
+        public bool IsStalemate(PieceColor color)
+        {
+            return !IsCheck(color)
+                && !HasLegalMoves(color);
+        }
+
+        private GameEvent? TryPromotePawn(Position position, PromotionPiece promotionPiece)
+        {
+            ChessPiece? piece = _board.GetPiece(position);
+
+            if (piece is not Pawn pawn)
+                return null;
+
+            if (pawn.Color == PieceColor.White &&
+                position.Row == 7)
+            {
+                _board.RemovePiece(position);
+
+                ChessPiece promotedPiece =
+                    PromotionPieceFactory.Create(
+                        pawn.Color,
+                        position,
+                        promotionPiece);
+
+                _board.AddPiece(promotedPiece);
+
+                return new GameEvent(
+                    GameEventType.Promotion,
+                    $"Белая пешка превращена в {promotionPiece}");
+            }
+
+            if (pawn.Color == PieceColor.Black &&
+                position.Row == 0)
+            {
+                _board.RemovePiece(position);
+
+                ChessPiece promotedPiece =
+                    PromotionPieceFactory.Create(
+                        pawn.Color,
+                        position,
+                        promotionPiece);
+
+                _board.AddPiece(promotedPiece);
+
+                return new GameEvent(
+                    GameEventType.Promotion,
+                    $"Черная пешка превращена в {promotionPiece}");
+            }
+
+            return null;
+        }
+
+        private bool IsCastle(Move move, out CastleInfo castleInfo)
+        {
+            castleInfo = default;
+
+            ChessPiece? king = _board.GetPiece(move.From);
+
+            if (king is not King)
+                return false;
+
+            int deltaColumn = move.To.Column - move.From.Column;
+
+            if (Math.Abs(deltaColumn) != 2)
+                return false;
+
+            if (king.MoveCount != 0)
+                return false;
+
+            bool kingSide = deltaColumn > 0;
+
+            int row = move.From.Row;
+
+            int rookColumn = kingSide ? 7 : 0;
+
+            Position rookFrom = new(row, rookColumn);
+
+            ChessPiece? rook = _board.GetPiece(rookFrom);
+
+            if (rook is not Rook || rook.MoveCount != 0)
+                return false;
+
+            int step = kingSide ? 1 : -1;
+
+            for (
+                int col = move.From.Column + step;
+                col != rookColumn;
+                col += step)
+            {
+                if (_board.GetPiece(new Position(row, col)) != null)
+                    return false;
+            }
+
+            // Король не может быть под шахом, проходить через битое поле
+            // или вставать под шах.
+            Position[] pathSquares = kingSide
+                ? [move.From, new Position(row, move.From.Column + 1), move.To]
+                : [move.From, new Position(row, move.From.Column - 1), move.To];
+
+
+            foreach (Position square in pathSquares)
+            {
+                if (IsSquareAttacked(square, king.Color))
+                    return false;
+            }
+
+            Position rookTo = kingSide
+                ? new(row, move.To.Column - 1)
+                : new(row, move.To.Column + 1);
+
+            castleInfo = new CastleInfo(
+                rookFrom,
+                rookTo);
+
+            return true;
+        }
+
+        private bool IsSquareAttacked(Position square, PieceColor color)
+        {
+            PieceColor opponentColor = color == PieceColor.White
+                ? PieceColor.Black
+                : PieceColor.White;
+
+            foreach (ChessPiece piece in _board.GetPieces(opponentColor))
+            {
+                if (piece.GetPossibleMoves(_board).Contains(square))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private GameEvent? SwitchTurnAndCheckState()
+        {
+            CurrentTurn = CurrentTurn == PieceColor.White
+                ? PieceColor.Black
+                : PieceColor.White;
+
+            RegisterCurrentPosition();
+
+            if (IsCheckmate(CurrentTurn))
+            {
+                State = GameState.Checkmate;
+
+                return new GameEvent(
+                    GameEventType.Checkmate,
+                    $"Мат. {CurrentTurn} проиграл.");
+            }
+
+            if (IsStalemate(CurrentTurn))
+            {
+                State = GameState.Stalemate;
+
+                return new GameEvent(
+                    GameEventType.Stalemate,
+                    $"Пат. Ход {CurrentTurn}.");
+            }
+
+            if (IsDrawByInsufficientMaterial())
+            {
+                State = GameState.Draw;
+
+                return new GameEvent(
+                    GameEventType.Draw,
+                    "Ничья из-за недостаточного материала.");
+            }
+
+            if (GetCurrentPositionRepetitionCount() >= 3)
+            {
+                State = GameState.Draw;
+
+                return new GameEvent(
+                    GameEventType.Draw,
+                    "Ничья по трёхкратному повторению позиции.");
+            }
+
+            if (HalfMoveClock >= 100)
+            {
+                State = GameState.Draw;
+
+                return new GameEvent(
+                    GameEventType.Draw,
+                    "Ничья по правилу 50 ходов.");
+            }
+
+            if (IsCheck(CurrentTurn))
+            {
+                State = GameState.Check;
+
+                return new GameEvent(
+                    GameEventType.Check,
+                    $"Шах {CurrentTurn}.");
+            }
+
+            State = GameState.Normal;
+
+            return null;
+        }
+
+        private bool IsEnPassant(Move move, out Pawn capturedPawn)
+        {
+            capturedPawn = null!;
+
+            if (LastMove is not Move lastMove)
+                return false;
+
+            ChessPiece? piece = _board.GetPiece(move.From);
+
+            if (piece is not Pawn pawn)
+                return false;
+
+            ChessPiece? lastMovedPiece = _board.GetPiece(lastMove.To);
+
+            if (lastMovedPiece is not Pawn enemyPawn)
+                return false;
+
+            if (enemyPawn.Color == pawn.Color)
+                return false;
+
+            // Последний ход должен быть двойным ходом пешки
+            int lastMoveDelta = lastMove.To.Row - lastMove.From.Row;
+
+            if (Math.Abs(lastMoveDelta) != 2)
+                return false;
+
+            // Пешки должны стоять рядом
+            if (lastMove.To.Row != move.From.Row)
+                return false;
+
+            if (Math.Abs(lastMove.To.Column - move.From.Column) != 1)
+                return false;
+
+            // Ход по диагонали вперед
+            int direction = pawn.Color == PieceColor.White ? 1 : -1;
+
+            if (move.To.Row != move.From.Row + direction)
+                return false;
+
+            if (move.To.Column != lastMove.To.Column)
+                return false;
+
+            // Целевая клетка должна быть пустой
+            if (_board.GetPiece(move.To) != null)
+                return false;
+
+            capturedPawn = enemyPawn;
+
+            return true;
+        }
+
+        public void Undo()
+        {
+            if (_history.Count == 0)
+                return;
+
+            // Убираем текущую позицию из истории повторений
+            UnregisterCurrentPosition();
+
+            MoveState state = _history.Pop();
+
+            _board.UndoMove(state);
+
+            if (_stateHistory.Count > 0)
+            {
+                State = _stateHistory.Pop();
+            }
+            else
+            {
+                State = GameState.Normal;
+            }
+
+            if (_moveHistory.Count > 0)
+            {
+                _moveHistory.RemoveAt(_moveHistory.Count - 1);
+            }
+
+            if (_moveRecords.Count > 0)
+            {
+                _moveRecords.RemoveAt(
+                    _moveRecords.Count - 1);
+            }
+
+            if (_halfMoveClockHistory.Count > 0)
+            {
+                HalfMoveClock = _halfMoveClockHistory.Pop();
+            }
+
+            LastMove = _history.Count > 0
+                ? new Move(
+                    _history.Peek().From,
+                    _history.Peek().To)
+                : null;
+
+            CurrentTurn =
+                CurrentTurn == PieceColor.White
+                    ? PieceColor.Black
+                    : PieceColor.White;
+        }
+
+        public IEnumerable<ChessPiece> GetPieces(PieceColor pieceColor)
+        {
+            return _board.GetPieces(PieceColor.White)
+                .Concat(_board.GetPieces(PieceColor.Black));
+        }
+
+        public IEnumerable<ChessPiece> GetAllPieces()
+        {
+            return _board.GetPieces(PieceColor.White)
+                         .Concat(_board.GetPieces(PieceColor.Black));
+        }
+
+        private void CompleteMove(MoveResult result)
+        {
+            GameEvent? stateEvent =
+                SwitchTurnAndCheckState();
+
+            if (stateEvent != null)
+            {
+                result.Events.Add(stateEvent);
+            }
+
+            result.Check = State == GameState.Check;
+            result.Checkmate = State == GameState.Checkmate;
+            result.Stalemate = State == GameState.Stalemate;
+
+            if (IsDrawByInsufficientMaterial())
+            {
+                State = GameState.Draw;
+
+                result.Draw = true;
+
+                result.Events.Add(
+                    new GameEvent(
+                        GameEventType.Draw,
+                        "Ничья: недостаточный материал"));
+            }
+        }
+
+        public bool IsDrawByInsufficientMaterial()
+        {
+            IReadOnlyCollection<ChessPiece> pieces =
+                GetAllPieces().ToList();
+
+            IReadOnlyCollection<ChessPiece> nonKings =
+                pieces
+                    .Where(piece => piece is not King)
+                    .ToList();
+
+            if (nonKings.Count == 0)
+                return true;
+
+            if (nonKings.Count == 1)
+            {
+                return nonKings.First() is Bishop or Knight;
+            }
+
+            if (nonKings.All(piece => piece is Bishop))
+            {
+                bool firstColor =  IsDarkSquare(nonKings.First().Position);
+
+                return nonKings.All(
+                    piece =>
+                        IsDarkSquare(piece.Position) == firstColor);
+            }
+
+            return false;
+        }
+
+        private static bool IsDarkSquare(Position position)
+        {
+            return
+                (position.Row + position.Column) % 2 == 0;
+        }
+
+        private string GetPositionKey()
+        {
+            string pieces = string.Join(
+                "|",
+                GetAllPieces()
+                    .OrderBy(piece => piece.Position.Row)
+                    .ThenBy(piece => piece.Position.Column)
+                    .Select(piece =>
+                        $"{piece.Color}:{piece.GetType().Name}:{piece.Position}"));
+
+            string castlingRights = GetCastlingRights();
+
+            string enPassant =
+                GetEnPassantTarget()?.ToString() ?? "-";
+
+            return $"{CurrentTurn};{pieces};{castlingRights};{enPassant}";
+        }
+
+        private Position? GetEnPassantTarget()
+        {
+            if (LastMove is not Move lastMove)
+                return null;
+
+            ChessPiece? piece =
+                _board.GetPiece(lastMove.To);
+
+            if (piece is not Pawn)
+                return null;
+
+            if (Math.Abs(
+                    lastMove.To.Row -
+                    lastMove.From.Row) != 2)
+            {
+                return null;
+            }
+
+            int targetRow =
+                (lastMove.From.Row +
+                 lastMove.To.Row) / 2;
+
+            return new Position(
+                targetRow,
+                lastMove.To.Column);
+        }
+
+        private int RegisterCurrentPosition()
+        {
+            string key = GetPositionKey();
+
+            if (_positionHistory.TryGetValue(
+                    key,
+                    out int count))
+            {
+                count++;
+
+                _positionHistory[key] = count;
+
+                return count;
+            }
+
+            _positionHistory[key] = 1;
+
+            return 1;
+        }
+
+        public int GetCurrentPositionRepetitionCount()
+        {
+            string key = GetPositionKey();
+
+            return _positionHistory.TryGetValue(
+                key,
+                out int count)
+                    ? count
+                    : 0;
+        }
+
+        private string GetCastlingRights()
+        {
+            List<string> rights = [];
+
+            ChessPiece? whiteKing =
+                _board.GetPiece(Position.Parse("E1"));
+
+            if (whiteKing is King &&
+                whiteKing.Color == PieceColor.White &&
+                whiteKing.MoveCount == 0)
+            {
+                ChessPiece? whiteKingSideRook =
+                    _board.GetPiece(Position.Parse("H1"));
+
+                if (whiteKingSideRook is Rook &&
+                    whiteKingSideRook.Color == PieceColor.White &&
+                    whiteKingSideRook.MoveCount == 0)
+                {
+                    rights.Add("K");
+                }
+
+                ChessPiece? whiteQueenSideRook =
+                    _board.GetPiece(Position.Parse("A1"));
+
+                if (whiteQueenSideRook is Rook &&
+                    whiteQueenSideRook.Color == PieceColor.White &&
+                    whiteQueenSideRook.MoveCount == 0)
+                {
+                    rights.Add("Q");
+                }
+            }
+
+            ChessPiece? blackKing =
+                _board.GetPiece(Position.Parse("E8"));
+
+            if (blackKing is King &&
+                blackKing.Color == PieceColor.Black &&
+                blackKing.MoveCount == 0)
+            {
+                ChessPiece? blackKingSideRook =
+                    _board.GetPiece(Position.Parse("H8"));
+
+                if (blackKingSideRook is Rook &&
+                    blackKingSideRook.Color == PieceColor.Black &&
+                    blackKingSideRook.MoveCount == 0)
+                {
+                    rights.Add("k");
+                }
+
+                ChessPiece? blackQueenSideRook =
+                    _board.GetPiece(Position.Parse("A8"));
+
+                if (blackQueenSideRook is Rook &&
+                    blackQueenSideRook.Color == PieceColor.Black &&
+                    blackQueenSideRook.MoveCount == 0)
+                {
+                    rights.Add("q");
+                }
+            }
+
+            return rights.Count > 0
+                ? string.Concat(rights)
+                : "-";
+        }
+
+        private void UnregisterCurrentPosition()
+        {
+            string key = GetPositionKey();
+
+            if (!_positionHistory.TryGetValue(
+                    key,
+                    out int count))
+            {
+                return;
+            }
+
+            if (count <= 1)
+            {
+                _positionHistory.Remove(key);
+            }
+            else
+            {
+                _positionHistory[key] = count - 1;
+            }
+        }
+
+        private string CreateMoveNotation(Move move)
+        {
+            ChessPiece? piece =
+                _board.GetPiece(move.From);
+
+            if (piece == null)
+                return string.Empty;
+
+            if (IsCastle(move, out CastleInfo castleInfo))
+            {
+                return castleInfo.RookFrom.Column > move.From.Column
+                    ? "O-O"
+                    : "O-O-O";
+            }
+
+            bool isCapture =
+                _board.GetPiece(move.To) != null;
+
+            if (!isCapture &&
+                IsEnPassant(move, out _))
+            {
+                isCapture = true;
+            }
+
+            string destination =
+                FormatSquare(move.To);
+
+            string notation =
+                piece switch
+                {
+                    King => "K",
+
+                    Queen => "Q",
+
+                    Rook => "R",
+
+                    Bishop => "B",
+
+                    Knight => "N",
+
+                    Pawn => string.Empty,
+
+                    _ => string.Empty
+                };
+
+            if (piece is Pawn && isCapture)
+            {
+                notation =
+                    ((char)('a' + move.From.Column))
+                        .ToString();
+            }
+
+            if (piece is not Pawn)
+            {
+                notation +=
+                    GetDisambiguation(move, piece);
+            }
+
+            if (isCapture)
+            {
+                notation += "x";
+            }
+
+            notation += destination;
+
+            if (move.Promotion is PromotionPiece promotion)
+            {
+                notation += "=" +
+                    GetPromotionNotation(promotion);
+            }
+
+            return notation;
+        }
+
+        private static string FormatSquare(Position position)
+        {
+            char file =
+                (char)('a' + position.Column);
+
+            int rank =
+                position.Row + 1;
+
+            return $"{file}{rank}";
+        }
+
+        private static string GetPromotionNotation(PromotionPiece promotion)
+        {
+            return promotion switch
+            {
+                PromotionPiece.Queen => "Q",
+
+                PromotionPiece.Rook => "R",
+
+                PromotionPiece.Bishop => "B",
+
+                PromotionPiece.Knight => "N",
+
+                _ => string.Empty
+            };
+        }
+
+        private string GetDisambiguation(Move move, ChessPiece movingPiece)
+        {
+            List<ChessPiece> candidates =
+                GetAllPieces()
+                    .Where(piece =>
+                        piece.Color == movingPiece.Color)
+                    .Where(piece =>
+                        piece.GetType() ==
+                        movingPiece.GetType())
+                    .Where(piece =>
+                        !piece.Position.Equals(move.From))
+                    .Where(piece =>
+                        CanPieceMoveTo(piece, move.To))
+                    .ToList();
+
+            if (candidates.Count == 0)
+                return string.Empty;
+
+            bool sameFile =
+                candidates.Any(piece =>
+                    piece.Position.Column ==
+                    move.From.Column);
+
+            bool sameRank =
+                candidates.Any(piece =>
+                    piece.Position.Row ==
+                    move.From.Row);
+
+            if (!sameFile)
+            {
+                return ((char)('a' + move.From.Column))
+                    .ToString();
+            }
+
+            if (!sameRank)
+            {
+                return (move.From.Row + 1)
+                    .ToString();
+            }
+
+            return FormatSquare(move.From);
+        }
+
+        private bool CanPieceMoveTo(ChessPiece piece, Position destination)
+        {
+            return GetLegalMoves(piece.Position)
+                .Any(move => move.To == destination);
+        }
+
+        private string AddCheckNotation(string notation)
+        {
+            return State switch
+            {
+                GameState.Checkmate =>
+                    notation + "#",
+
+                GameState.Check =>
+                    notation + "+",
+
+                _ =>
+                    notation
+            };
+        }
+    }
+}
+```
+
+### ChessGame.Core\Model\CastleInfo.cs
+```csharp
+namespace ChessGame.Core.Model
+{
+    public readonly record struct CastleInfo(
+        Position RookFrom,
+        Position RookTo);
+}
+
+```
+
+### ChessGame.Core\Model\Direction.cs
+```csharp
+namespace ChessGame.Core.Model
+{
+    public readonly record struct Direction(
+          int RowOffset,
+          int ColumnOffset);
+}
+
+```
+
+### ChessGame.Core\Model\GameState.cs
+```csharp
+namespace ChessGame.Core.Model
+{
+    public enum GameState
+    {
+        Normal,
+        Check,
+        Checkmate,
+        Stalemate,
+        Draw
+    }
+}
+
+```
+
+### ChessGame.Core\Model\Move.cs
+```csharp
+namespace ChessGame.Core.Model
+{
+
+    public readonly record struct Move(Position From, Position To, PromotionPiece? Promotion = null)
+    {
+        public override string ToString()
+        {
+            if (Promotion.HasValue)
+                return $"{From} → {To}={Promotion.Value}";
+
+            return $"{From} → {To}";
+        }
+    }
+}
+
+```
+
+### ChessGame.Core\Model\MoveRecord.cs
+```csharp
+namespace ChessGame.Core.Model
+{
+    public sealed record MoveRecord(
+        Move Move,
+        string Notation);
+}
+
+```
+
+### ChessGame.Core\Model\MoveState.cs
+```csharp
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core.Model;
+
+internal sealed record MoveState
+{
+    public required ChessPiece Piece { get; init; }
+
+    public required Position From { get; init; }
+
+    public required Position To { get; init; }
+
+    public required int PreviousMoveCount { get; init; }
+
+    public ChessPiece? CapturedPiece { get; init; }
+
+    public Position CapturedPiecePosition { get; init; }
+
+    public ChessPiece? SecondaryPiece { get; init; }
+
+    public Position? SecondaryFrom { get; init; }
+
+    public Position? SecondaryTo { get; init; }
+
+    public int? SecondaryPreviousMoveCount { get; init; }
+
+    public ChessPiece? PromotedPiece { get; init; }
+
+    public int CapturedPiecePreviousMoveCount { get; init; }
+
+    public GameState PreviousGameState { get; init; }
+
+    public int PreviousHalfMoveClock { get; init; }
+}
+```
+
+### ChessGame.Core\Model\Position.cs
+```csharp
+namespace ChessGame.Core.Model
+{
+    public readonly record struct Position(int Row, int Column)
+    {
+        public Position Offset(Direction direction)
+        {
+            return new Position(
+                Row + direction.RowOffset,
+                Column + direction.ColumnOffset);
+        }
+
+        public override string ToString() 
+        {
+            char file = (char)('A' + Column);
+            int rank = Row + 1;
+            return $"{file}{rank}";
+        }
+
+        public static bool TryParse(string? value, out Position position)
+        {
+            position = default;
+
+            if (string.IsNullOrWhiteSpace(value) || value.Length != 2)
+                return false;
+
+            char file = char.ToUpperInvariant(value[0]);
+            char rank = value[1];
+
+            if (file is < 'A' or > 'H')
+                return false;
+
+            if (rank is < '1' or > '8')
+                return false;
+
+            position = new Position(
+                rank - '1',
+                file - 'A');
+
+            return true;
+        }
+
+        public static Position Parse(string value)
+        {
+            if (!TryParse(value, out Position position))
+                throw new FormatException(
+                    $"Недопустимая шахматная позиция '{value}'.");
+
+            return position;
+        }
+    }
+}
+
+```
+
+### ChessGame.Core\Model\PositionKey.cs
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace ChessGame.Core.Model
+{
+    internal class PositionKey
+    {
+    }
+}
+
+```
+
+### ChessGame.Core\Model\PromotionPiece.cs
+```csharp
+namespace ChessGame.Core.Model
+{
+    public enum PromotionPiece
+    {
+        Queen,
+        Rook,
+        Bishop,
+        Knight
+    }
+}
+
+```
+
+### ChessGame.Core\Movement\IMoveProvider.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core.Movement
+{
+    public interface IMoveProvider
+    {
+        IReadOnlyCollection<Position> GetMoves(
+            ChessPiece piece,
+            Board board);
+    }
+}
+
+```
+
+### ChessGame.Core\Movement\KingMoveProvider.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core.Movement
+{
+    internal class KingMoveProvider : MoveProviderBase
+    {
+        public override IReadOnlyCollection<Position> GetMoves(ChessPiece piece, Board board)
+        {
+            List<Position> moves = new();
+            foreach (Direction direction in Directions)
+            {
+                Position position = piece.Position.Offset(direction);
+                if (board.CanMoveTo(piece, position))
+                {
+                    ChessPiece? target = board.GetPiece(position);
+
+                    if (target != null && target.Color != piece.Color || target == null)
+                    {
+                        moves.Add(position);
+                    }
+                }
+            }
+            return moves;
+        }
+
+        private static readonly Direction[] Directions =
+        {
+            new(1,-1),
+            new(1,0),
+            new(1,1),
+            new(0,-1),
+            new(0,1),
+            new(-1,-1),
+            new(-1,0),
+            new(-1,1)
+        };
+    }
+}
+
+```
+
+### ChessGame.Core\Movement\KnightMoveProvider.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core.Movement
+{
+    internal class KnightMoveProvider : MoveProviderBase
+    {
+        public override IReadOnlyCollection<Position> GetMoves(ChessPiece piece, Board board)
+        {
+            List<Position> moves = new();
+            foreach (Direction direction in Directions)
+            {
+                Position position = piece.Position.Offset(direction);
+                if (board.CanMoveTo(piece, position))
+                {
+                    ChessPiece? target = board.GetPiece(position);
+
+                    if (target != null && target.Color != piece.Color || target == null)
+                    {
+                        moves.Add(position);
+                    }
+                }
+            }
+            return moves;
+        }
+
+        private static readonly Direction[] Directions =
+        {
+            new(2,1),
+            new(2,-1),
+            new(-2,1),
+            new(-2,-1),
+            new(1,2),
+            new(1,-2),
+            new(-1,2),
+            new(-1,-2)
+        };
+    }
+}
+
+```
+
+### ChessGame.Core\Movement\MoveProviderBase.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core.Movement
+{
+    public abstract class MoveProviderBase : IMoveProvider
+    {
+        public abstract IReadOnlyCollection<Position> GetMoves(
+            ChessPiece piece,
+            Board board);
+    }
+}
+
+```
+
+### ChessGame.Core\Movement\PawnMoveProvider.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core.Movement
+{
+    public class PawnMoveProvider : MoveProviderBase
+    {
+        public override IReadOnlyCollection<Position> GetMoves(ChessPiece piece, Board board)
+        {
+            Pawn pawn = (Pawn)piece;
+            List<Position> moves = new();
+
+            int direction = pawn.Color == PieceColor.White ? 1 : -1;
+
+            Direction forward = new(direction, 0);
+            Direction doubleForward = new(direction * 2, 0);
+            Direction leftAttack = new(direction, -1);
+            Direction rightAttack = new(direction, 1);
+
+            Position first = pawn.Position.Offset(forward);
+
+            if (board.Contains(first) && board.IsCellFree(first))
+                moves.Add(first);
+
+            Position second = pawn.Position.Offset(doubleForward);
+            if (pawn.MoveCount == 0 && board.Contains(second) && board.IsCellFree(first) && board.IsCellFree(second))
+            {
+                moves.Add(second);
+            }
+
+            Position left = pawn.Position.Offset(leftAttack);
+            if (board.Contains(left))
+            {
+                ChessPiece? target = board.GetPiece(left);
+
+                if (target != null &&
+                    target.Color != piece.Color)
+                {
+                    moves.Add(left);
+                }
+            }
+
+            Position right = pawn.Position.Offset(rightAttack);
+
+            if (board.Contains(right))
+            {
+                ChessPiece? target = board.GetPiece(right);
+
+                if (target != null &&
+                    target.Color != piece.Color)
+                {
+                    moves.Add(right);
+                }
+            }
+
+            return moves;
+        }
+    }
+}
+
+```
+
+### ChessGame.Core\Movement\SlidingMoveProvider.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core.Movement
+{
+    public class SlidingMoveProvider : MoveProviderBase
+    {
+        private readonly IReadOnlyCollection<Direction> _directions;
+
+        public SlidingMoveProvider(
+            IReadOnlyCollection<Direction> directions)
+        {
+            _directions = directions;
+        }
+
+        public override IReadOnlyCollection<Position> GetMoves(
+            ChessPiece piece,
+            Board board)
+        {
+            List<Position> moves = new();
+
+            foreach (Direction direction in _directions)
+            {
+                Position current = piece.Position.Offset(direction);
+
+                while (board.Contains(current))
+                {
+                    ChessPiece? target = board.GetPiece(current);
+
+                    if (target == null)
+                    {
+                        moves.Add(current);
+                        current = current.Offset(direction);
+                        continue;
+                    }
+
+                    if (target.Color != piece.Color)
+                        moves.Add(current);
+
+                    break;
+                }
+            }
+            return moves;
+        }
+    }
+}
+```
+
+### ChessGame.Core\Pieces\Bishop.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Movement;
+
+namespace ChessGame.Core.Pieces
+{
+    public class Bishop : ChessPiece
+    {
+        private static readonly Direction[] BishopDirections =
+        {
+            new( 1, 1),
+            new( 1,-1),
+            new(-1, 1),
+            new(-1,-1)
+        };
+
+        public Bishop(
+            PieceColor color,
+            Position position)
+            : base(
+                color,
+                position,
+                new SlidingMoveProvider(BishopDirections))
+        {
+        }
+
+        public override char ShortName => 'B';
+    }
+}
+
+```
+
+### ChessGame.Core\Pieces\ChessPiece.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Movement;
+
+namespace ChessGame.Core.Pieces
+{
+    public abstract class ChessPiece
+    {
+        public PieceColor Color { get; }
+
+        public Position Position { get; private set; }
+
+        public abstract char ShortName { get; }
+
+        public int MoveCount { get; private set; }
+
+        public IMoveProvider MoveProvider { get; }
+
+        public bool IsAlive { get; private set; } = true;
+
+        internal void Capture()
+        {
+            IsAlive = false;
+        }
+
+        public char ColorCode => Color == PieceColor.White ? 'W' : 'B';
+
+        protected ChessPiece(PieceColor color, Position position, IMoveProvider moveProvider)
+        {
+            Color = color;
+            Position = position;
+            MoveProvider = moveProvider;
+        }
+
+        internal void MoveTo(Position position)
+        {
+            Position = position;
+            MoveCount++;
+        }
+
+        public IReadOnlyCollection<Position> GetPossibleMoves(Board board)
+        {
+            return MoveProvider.GetMoves(this, board);
+        }
+
+        internal void Restore(Position position, int moveCount, bool isAlive)
+        {
+            Position = position;
+            MoveCount = moveCount;
+            IsAlive = isAlive;
+        }
+    }
+
+    public enum PieceColor
+    {
+        White,
+        Black
+    }
+}
+
+```
+
+### ChessGame.Core\Pieces\King.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Movement;
+
+namespace ChessGame.Core.Pieces
+{
+    public class King : ChessPiece
+    {
+        public King(
+            PieceColor color,
+            Position position)
+            : base(
+                color,
+                position,
+                new KingMoveProvider())
+        {
+        }
+        public override char ShortName => 'K';
+    }
+}
+```
+
+### ChessGame.Core\Pieces\Knight.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Movement;
+
+namespace ChessGame.Core.Pieces
+{
+    public class Knight : ChessPiece
+    {
+        public Knight(
+            PieceColor color,
+            Position position)
+            : base(
+                color,
+                position,
+                new KnightMoveProvider())
+        {
+        }
+        public override char ShortName => 'N';
+    }
+}
+
+```
+
+### ChessGame.Core\Pieces\Pawn.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Movement;
+
+namespace ChessGame.Core.Pieces
+{
+    public class Pawn : ChessPiece
+    {
+        public Pawn(
+            PieceColor color,
+            Position position)
+            : base(
+                color,
+                position,
+                new PawnMoveProvider())
+        {
+        }
+
+        public override char ShortName => 'P';
+    }
+}
+
+```
+
+### ChessGame.Core\Pieces\Queen.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Movement;
+
+namespace ChessGame.Core.Pieces
+{
+    public class Queen : ChessPiece
+    {
+        private static readonly Direction[] QueenDirections =
+        {
+            // ладья
+            new(1, 0),
+            new(-1, 0),
+            new(0, 1),
+            new(0, -1),
+
+        // слон
+            new(1, 1),
+            new(1, -1),
+            new(-1, 1),
+            new(-1, -1)
+        };
+
+        public Queen(
+            PieceColor color,
+            Position position)
+            : base(
+                color,
+                position,
+                new SlidingMoveProvider(QueenDirections))
+        {
+        }
+
+        public override char ShortName => 'Q';
+    }
+}
+```
+
+### ChessGame.Core\Pieces\Rook.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Movement;
+
+namespace ChessGame.Core.Pieces
+{
+    public class Rook : ChessPiece
+    {
+        private static readonly Direction[] RookDirections =
+        {
+            new(1, 0),
+            new(-1, 0),
+            new(0, 1),
+            new(0, -1)
+        };
+
+        public Rook(
+            PieceColor color,
+            Position position)
+            : base(
+                color,
+                position,
+                new SlidingMoveProvider(RookDirections))
+        {
+        }
+
+        public override char ShortName => 'R';
+    }
+}
+```
+
+### ChessGame.Core\Program.cs
+```csharp
+using ChessGame.Core;
+using ChessGame.Core.Pieces;
+using ChessGame.Core.Model;
+
+Board board = new Board();  
+
+```
+
+### ChessGame.Core\Results\MoveResult.cs
+```csharp
+using ChessGame.Core.Events;
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core.Results
+{
+    public sealed class MoveResult
+    {
+        public bool Success { get; set; } = true;
+
+        public List<GameEvent> Events { get; } = [];
+
+        public bool Check { get; set; }
+
+        public bool Checkmate { get; set; }
+
+        public bool Stalemate { get; set; }
+
+        public bool Draw { get; set; }
+
+        public Move? Move { get; set; }
+
+        public string? San { get; set; }
+
+        public GameState State { get; set; }
+
+        public PieceColor CurrentTurn { get; set; }
+    }
+}
+
+```
+
+### ChessGame.Core\Setup\InitialBoardFactory.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Core.Setup
+{
+    public static class InitialBoardFactory
+    {
+        public static Board Create()
+        {
+            Board board = new();
+
+            // Белые
+            board.AddPiece(new King(PieceColor.White, Position.Parse("E1")));
+            board.AddPiece(new Queen(PieceColor.White, Position.Parse("D1")));
+            board.AddPiece(new Rook(PieceColor.White, Position.Parse("A1")));
+            board.AddPiece(new Rook(PieceColor.White, Position.Parse("H1")));
+            board.AddPiece(new Bishop(PieceColor.White, Position.Parse("C1")));
+            board.AddPiece(new Bishop(PieceColor.White, Position.Parse("F1")));
+            board.AddPiece(new Knight(PieceColor.White, Position.Parse("B1")));
+            board.AddPiece(new Knight(PieceColor.White, Position.Parse("G1")));
+            board.AddPiece(new Pawn(PieceColor.White, Position.Parse("A2")));
+            board.AddPiece(new Pawn(PieceColor.White, Position.Parse("B2")));
+            board.AddPiece(new Pawn(PieceColor.White, Position.Parse("C2")));
+            board.AddPiece(new Pawn(PieceColor.White, Position.Parse("D2")));
+            board.AddPiece(new Pawn(PieceColor.White, Position.Parse("E2")));
+            board.AddPiece(new Pawn(PieceColor.White, Position.Parse("F2")));
+            board.AddPiece(new Pawn(PieceColor.White, Position.Parse("G2")));
+            board.AddPiece(new Pawn(PieceColor.White, Position.Parse("H2")));
+
+            // Чёрные
+            board.AddPiece(new King(PieceColor.Black, Position.Parse("E8")));
+            board.AddPiece(new Queen(PieceColor.Black, Position.Parse("D8")));
+            board.AddPiece(new Rook(PieceColor.Black, Position.Parse("A8")));
+            board.AddPiece(new Rook(PieceColor.Black, Position.Parse("H8")));
+            board.AddPiece(new Bishop(PieceColor.Black, Position.Parse("C8")));
+            board.AddPiece(new Bishop(PieceColor.Black, Position.Parse("F8")));
+            board.AddPiece(new Knight(PieceColor.Black, Position.Parse("B8")));
+            board.AddPiece(new Knight(PieceColor.Black, Position.Parse("G8")));
+            board.AddPiece(new Pawn(PieceColor.Black, Position.Parse("A7")));
+            board.AddPiece(new Pawn(PieceColor.Black, Position.Parse("B7")));
+            board.AddPiece(new Pawn(PieceColor.Black, Position.Parse("C7")));
+            board.AddPiece(new Pawn(PieceColor.Black, Position.Parse("D7")));
+            board.AddPiece(new Pawn(PieceColor.Black, Position.Parse("E7")));
+            board.AddPiece(new Pawn(PieceColor.Black, Position.Parse("F7")));
+            board.AddPiece(new Pawn(PieceColor.Black, Position.Parse("G7")));
+            board.AddPiece(new Pawn(PieceColor.Black, Position.Parse("H7")));
+
+            return board;
+        }
+    }
+}
+
+```
+
+### ChessGame.Server\appsettings.Development.json
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  }
+}
+
+```
+
+### ChessGame.Server\appsettings.json
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*"
+}
+
+```
+
+### ChessGame.Server\BoardFactory.cs
+```csharp
+using ChessGame.Core;
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Server
+{
+    public static class InitialBoardFactory
+    {
+        public static Board Create()
+        {
+            Board board = new();
+
+            // Белые
+            board.AddPiece(new King(PieceColor.White, Position.Parse("E1")));
+            board.AddPiece(new Queen(PieceColor.White, Position.Parse("D1")));
+            board.AddPiece(new Rook(PieceColor.White, Position.Parse("A1")));
+            board.AddPiece(new Rook(PieceColor.White, Position.Parse("H1")));
+            board.AddPiece(new Bishop(PieceColor.White, Position.Parse("C1")));
+            board.AddPiece(new Bishop(PieceColor.White, Position.Parse("F1")));
+            board.AddPiece(new Knight(PieceColor.White, Position.Parse("B1")));
+            board.AddPiece(new Knight(PieceColor.White, Position.Parse("G1")));
+
+
+            // Чёрные
+            board.AddPiece(new King(PieceColor.Black, Position.Parse("E8")));
+            board.AddPiece(new Queen(PieceColor.Black, Position.Parse("D8")));
+            board.AddPiece(new Rook(PieceColor.Black, Position.Parse("A8")));
+            board.AddPiece(new Rook(PieceColor.Black, Position.Parse("H8")));
+            board.AddPiece(new Bishop(PieceColor.Black, Position.Parse("C8")));
+            board.AddPiece(new Bishop(PieceColor.Black, Position.Parse("F8")));
+            board.AddPiece(new Knight(PieceColor.Black, Position.Parse("B8")));
+            board.AddPiece(new Knight(PieceColor.Black, Position.Parse("G8")));
+
+            //Пешки
+            foreach (var file in "ABCDEFGH")
+            {
+                board.AddPiece(new Pawn(PieceColor.White, Position.Parse($"{file}2")));
+                board.AddPiece(new Pawn(PieceColor.Black, Position.Parse($"{file}7")));
+            }
+
+            return board;
+        }
+    }
+}
+
+```
+
+### ChessGame.Server\ChessGame.Server.csproj
+```xml
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore.Annotations" Version="8.1.4" />
+    <PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="8.1.4" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="8.1.4" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="8.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ChessGame.Application\ChessGame.Application.csproj" />
+    <ProjectReference Include="..\ChessGame.Contracts\ChessGame.Contracts.csproj" />
+    <ProjectReference Include="..\ChessGame.Core\ChessGame.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Models\" />
+    <Folder Include="Services\" />
+  </ItemGroup>
+
+</Project>
+
+```
+
+### ChessGame.Server\Controllers\GamesController.cs
+```csharp
+using ChessGame.Application.Games;
+using ChessGame.Contracts.Dto;
+using Microsoft.AspNetCore.Mvc;
+using Swashbuckle.AspNetCore.Annotations;
+
+namespace ChessGame.Server.Controllers
+{
+    [ApiController]
+    [Route("api/games")]
+    public sealed class GamesController : ControllerBase
+    {
+        private readonly IChessGameService _gameService;
+
+        public GamesController(
+            IChessGameService gameService)
+        {
+            _gameService = gameService;
+        }
+
+        // ============================================================
+        // CREATE
+        // ============================================================
+
+        [HttpPost]
+        [SwaggerOperation(
+            Summary = "Создает партию",
+            Description =
+                "Создает новую шахматную партию.",
+            OperationId = "CreateGame",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Шахматная партия успешно создана")]
+        public ActionResult<GameDto> Create()
+        {
+            GameDto game =
+                _gameService.CreateGame();
+
+            return Ok(game);
+        }
+
+        // ============================================================
+        // GET
+        // ============================================================
+
+        [HttpGet("{id:guid}")]
+        [SwaggerOperation(
+            Summary = "Получает партию",
+            Description =
+                "Возвращает текущее состояние шахматной партии.",
+            OperationId = "GetGame",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Данные шахматной партии успешно получены")]
+        [SwaggerResponse(
+            404,
+            "Шахматная партия не найдена")]
+        public ActionResult<GameDto> Get(Guid id)
+        {
+            try
+            {
+                GameDto game =
+                    _gameService.GetGame(id);
+
+                return Ok(game);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+        }
+
+        // ============================================================
+        // MOVE
+        // ============================================================
+
+        [HttpPost("{id:guid}/move")]
+        [SwaggerOperation(
+            Summary = "Делает ход",
+            Description =
+                "Выполняет ход в указанной шахматной партии.",
+            OperationId = "MakeMove",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Ход успешно выполнен")]
+        [SwaggerResponse(
+            400,
+            "Недопустимый ход")]
+        [SwaggerResponse(
+            404,
+            "Шахматная партия не найдена")]
+        public ActionResult<MoveResultDto> Move(
+            Guid id,
+            [FromBody] MoveDto move)
+        {
+            try
+            {
+                MoveResultDto result =
+                    _gameService.MakeMove(
+                        id,
+                        move);
+
+                return Ok(result);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(
+                    new
+                    {
+                        Error = ex.Message
+                    });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(
+                    new
+                    {
+                        Error = ex.Message
+                    });
+            }
+        }
+
+        // ============================================================
+        // UNDO
+        // ============================================================
+
+        [HttpPost("{id:guid}/undo")]
+        [SwaggerOperation(
+            Summary = "Отменяет последний ход",
+            Description =
+                "Возвращает партию в состояние до последнего хода.",
+            OperationId = "UndoMove",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Ход успешно отменен")]
+        [SwaggerResponse(
+            404,
+            "Шахматная партия не найдена")]
+        public ActionResult<GameDto> Undo(Guid id)
+        {
+            try
+            {
+                GameDto game =
+                    _gameService.UndoMove(id);
+
+                return Ok(game);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+        }
+
+        // ============================================================
+        // LEGAL MOVES
+        // ============================================================
+
+        [HttpGet("{id:guid}/legalmoves/{square}")]
+        [SwaggerOperation(
+            Summary = "Получает допустимые ходы",
+            Description =
+                "Возвращает все допустимые клетки для фигуры на указанной позиции.",
+            OperationId = "GetLegalMoves",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Список допустимых ходов успешно получен")]
+        [SwaggerResponse(
+            400,
+            "Некорректная шахматная позиция")]
+        [SwaggerResponse(
+            404,
+            "Шахматная партия не найдена")]
+        public ActionResult<
+            IReadOnlyCollection<PositionDto>>
+            LegalMoves(
+                Guid id,
+                string square)
+        {
+            try
+            {
+                PositionDto position =
+                    ParsePosition(square);
+
+                IReadOnlyCollection<PositionDto> moves =
+                    _gameService.GetLegalMoves(
+                        id,
+                        position);
+
+                return Ok(moves);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(
+                    new
+                    {
+                        Error = ex.Message
+                    });
+            }
+        }
+
+        // ============================================================
+        // DELETE
+        // ============================================================
+
+        [HttpDelete("{id:guid}")]
+        [SwaggerOperation(
+            Summary = "Удаляет партию",
+            Description =
+                "Удаляет шахматную партию.",
+            OperationId = "DeleteGame",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            204,
+            "Шахматная партия удалена")]
+        [SwaggerResponse(
+            404,
+            "Шахматная партия не найдена")]
+        public IActionResult Delete(Guid id)
+        {
+            bool removed =
+                _gameService.DeleteGame(id);
+
+            if (!removed)
+            {
+                return NotFound();
+            }
+
+            return NoContent();
+        }
+
+        // ============================================================
+        // GET ALL
+        // ============================================================
+
+        [HttpGet]
+        [SwaggerOperation(
+            Summary = "Получает список партий",
+            Description =
+                "Возвращает список всех активных партий.",
+            OperationId = "GetGames",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Список партий успешно получен")]
+        public ActionResult<
+            IReadOnlyCollection<GameInfoDto>>
+            GetAll()
+        {
+            IReadOnlyCollection<GameInfoDto> games =
+                _gameService.GetGames();
+
+            return Ok(games);
+        }
+
+        // ============================================================
+        // POSITION PARSER
+        // ============================================================
+
+        private static PositionDto ParsePosition(
+            string square)
+        {
+            if (string.IsNullOrWhiteSpace(square))
+            {
+                throw new ArgumentException(
+                    "Square is required.");
+            }
+
+            square =
+                square.Trim()
+                      .ToLowerInvariant();
+
+            if (square.Length != 2)
+            {
+                throw new ArgumentException(
+                    $"Invalid square '{square}'.");
+            }
+
+            char file =
+                square[0];
+
+            char rank =
+                square[1];
+
+            if (file < 'a' || file > 'h')
+            {
+                throw new ArgumentException(
+                    $"Invalid file in square '{square}'.");
+            }
+
+            if (rank < '1' || rank > '8')
+            {
+                throw new ArgumentException(
+                    $"Invalid rank in square '{square}'.");
+            }
+
+            return new PositionDto(
+                rank - '1',
+                file - 'a');
+        }
+    }
+}
+```
+
+### ChessGame.Server\Program.cs
+```csharp
+using ChessGame.Application.Games;
+using System.Text.Json.Serialization;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// ============================================================
+// Controllers + JSON
+// ============================================================
+
+builder.Services
+    .AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(
+            new JsonStringEnumConverter());
+    });
+
+// ============================================================
+// Swagger
+// ============================================================
+
+builder.Services.AddEndpointsApiExplorer();
+
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc(
+        "v1",
+        new Microsoft.OpenApi.Models.OpenApiInfo
+        {
+            Title = "ChessGame API",
+            Version = "v1",
+            Description =
+                "API for managing chess games"
+        });
+
+    options.EnableAnnotations();
+});
+
+// ============================================================
+// Application services
+// ============================================================
+
+// Хранилище активных партий в памяти
+builder.Services.AddSingleton<GameManager>();
+
+// Основной application service
+builder.Services.AddSingleton<
+    IChessGameService,
+    ChessGameService>();
+
+var app = builder.Build();
+
+// ============================================================
+// HTTP pipeline
+// ============================================================
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.Run();
+
+// Required for integration tests
+public partial class Program
+{
+}
+```
+
+### ChessGame.Server\PromotionBoardFactory.cs
+```csharp
+using ChessGame.Core.Model;
+using ChessGame.Core.Pieces;
+using ChessGame.Core;
+
+namespace ChessGame.Server
+{
+    public static class PromotionBoardFactory
+    {
+        public static Board Create()
+        {
+            Board board = new();
+
+            board.AddPiece(
+                new King(
+                    PieceColor.White,
+                    Position.Parse("E1")));
+
+            board.AddPiece(
+                new King(
+                    PieceColor.Black,
+                    Position.Parse("E8")));
+
+            board.AddPiece(
+                new Pawn(
+                    PieceColor.White,
+                    Position.Parse("A7")));
+
+            return board;
+        }
+    }
+}
+```
+
+### ChessGame.Server\Properties\launchSettings.json
+```json
+{
+  "$schema": "http://json.schemastore.org/launchsettings.json",
+  "iisSettings": {
+    "windowsAuthentication": false,
+    "anonymousAuthentication": true,
+    "iisExpress": {
+      "applicationUrl": "http://localhost:62031",
+      "sslPort": 44393
+    }
+  },
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "applicationUrl": "http://localhost:5179",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    },
+    "https": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "applicationUrl": "https://localhost:7059;http://localhost:5179",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    },
+    "IIS Express": {
+      "commandName": "IISExpress",
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
+
+```
+
+### ChessGame.sln
+```text
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.11.35327.3
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Core", "ChessGame.Core\ChessGame.Core.csproj", "{C073365E-EFCA-4ACA-A431-6B764F1D4D9E}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Contracts", "ChessGame.Contracts\ChessGame.Contracts.csproj", "{224A391E-B35F-49AF-B373-B042DF3986FA}"
+	ProjectSection(ProjectDependencies) = postProject
+		{C073365E-EFCA-4ACA-A431-6B764F1D4D9E} = {C073365E-EFCA-4ACA-A431-6B764F1D4D9E}
+	EndProjectSection
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Server", "ChessGame.Server\ChessGame.Server.csproj", "{9633FA7F-00C9-4DEE-82E9-3254F6086099}"
+	ProjectSection(ProjectDependencies) = postProject
+		{C073365E-EFCA-4ACA-A431-6B764F1D4D9E} = {C073365E-EFCA-4ACA-A431-6B764F1D4D9E}
+	EndProjectSection
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Web", "ChessGame.Web\ChessGame.Web.csproj", "{D28BACB5-822D-418D-9A94-5C1B6AAAD1C6}"
+	ProjectSection(ProjectDependencies) = postProject
+		{C073365E-EFCA-4ACA-A431-6B764F1D4D9E} = {C073365E-EFCA-4ACA-A431-6B764F1D4D9E}
+	EndProjectSection
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessGame.Application", "ChessGame.Application\ChessGame.Application.csproj", "{CDF4A28B-B54E-4B29-A85D-546A1091374A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChessGame.ApiClient", "ChessGame.ApiClient\ChessGame.ApiClient.csproj", "{60E03764-6378-40C2-9442-BFEE7A9248EA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C073365E-EFCA-4ACA-A431-6B764F1D4D9E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C073365E-EFCA-4ACA-A431-6B764F1D4D9E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C073365E-EFCA-4ACA-A431-6B764F1D4D9E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C073365E-EFCA-4ACA-A431-6B764F1D4D9E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{224A391E-B35F-49AF-B373-B042DF3986FA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{224A391E-B35F-49AF-B373-B042DF3986FA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{224A391E-B35F-49AF-B373-B042DF3986FA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{224A391E-B35F-49AF-B373-B042DF3986FA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9633FA7F-00C9-4DEE-82E9-3254F6086099}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9633FA7F-00C9-4DEE-82E9-3254F6086099}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9633FA7F-00C9-4DEE-82E9-3254F6086099}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9633FA7F-00C9-4DEE-82E9-3254F6086099}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D28BACB5-822D-418D-9A94-5C1B6AAAD1C6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D28BACB5-822D-418D-9A94-5C1B6AAAD1C6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D28BACB5-822D-418D-9A94-5C1B6AAAD1C6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D28BACB5-822D-418D-9A94-5C1B6AAAD1C6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CDF4A28B-B54E-4B29-A85D-546A1091374A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CDF4A28B-B54E-4B29-A85D-546A1091374A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CDF4A28B-B54E-4B29-A85D-546A1091374A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CDF4A28B-B54E-4B29-A85D-546A1091374A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{60E03764-6378-40C2-9442-BFEE7A9248EA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{60E03764-6378-40C2-9442-BFEE7A9248EA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{60E03764-6378-40C2-9442-BFEE7A9248EA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{60E03764-6378-40C2-9442-BFEE7A9248EA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {93A93035-1493-4B54-9C38-A841240EDE51}
+	EndGlobalSection
+EndGlobal
+
+```
+
+### ChessGame.Web\appsettings.Development.json
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  }
+}
+
+```
+
+### ChessGame.Web\appsettings.json
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*"
+}
+
+```
+
+### ChessGame.Web\ChessGame.Web.csproj
+```xml
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Folder Include="Pages\" />
+    <Folder Include="wwwroot\css\" />
+    <Folder Include="wwwroot\pieces\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ChessGame.ApiClient\ChessGame.ApiClient.csproj" />
+    <ProjectReference Include="..\ChessGame.Contracts\ChessGame.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>
+
+```
+
+### ChessGame.Web\Components\_Imports.razor
+```razor
+@using System.Net.Http
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.Components.Web.Virtualization
+@using Microsoft.JSInterop
+@using static Microsoft.AspNetCore.Components.Web.RenderMode
+
+@using ChessGame.Web
+@using ChessGame.Web.Components
+@using Microsoft.AspNetCore.Components
+```
+
+### ChessGame.Web\Components\App.razor
+```razor
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <base href="/" />
+
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="ChessGame.Web.styles.css" />
+
+    <HeadOutlet />
+</head>
+
+<body>
+
+    <Routes @rendermode="InteractiveServer" />
+
+    <script src="_framework/blazor.web.js"></script>
+
+</body>
+
+</html>
+```
+
+### ChessGame.Web\Components\ChessBoard.razor
+```razor
+@using ChessGame.Contracts.Dto
+@using ChessGame.ApiClient.Services
+
+@inject IChessGameApiClient ChessGameApiClient
+
+<div class="chess-board">
+
+    @for (int displayRow = 7; displayRow >= 0; displayRow--)
+    {
+        int row = displayRow;
+
+        @for (int column = 0; column < 8; column++)
+        {
+            int currentColumn = column;
+
+            PositionDto position = new(
+            row,
+            currentColumn);
+
+            PieceDto? piece =
+            GetPiece(position);
+
+            bool isLightSquare =
+            (row + currentColumn) % 2 == 0;
+
+            bool isSelected =
+            _selectedPosition is not null &&
+            _selectedPosition.Row == position.Row &&
+            _selectedPosition.Column == position.Column;
+
+            bool isLegalMove =
+            _legalMoves.Any(
+            p =>
+            p.Row == position.Row &&
+            p.Column == position.Column);
+
+            bool isCapture =
+            isLegalMove &&
+            piece is not null &&
+            piece.Color != Game?.CurrentTurn;
+
+            string squareClass =
+            GetSquareClass(
+            isLightSquare,
+            isSelected,
+            isLegalMove,
+            isCapture);
+
+            <button class="@squareClass"
+                    @onclick="() => OnSquareClick(position)">
+
+                @if (piece is not null)
+                {
+                    <span class="chess-piece">
+                        @GetPieceSymbol(piece)
+                    </span>
+                }
+
+                @if (isLegalMove && piece is null)
+                {
+                    <span class="move-marker"></span>
+                }
+
+                @if (isCapture)
+                {
+                    <span class="capture-marker"></span>
+                }
+
+            </button>
+        }
+    }
+
+    @if (_pendingPromotionMove is not null)
+    {
+        <div class="promotion-overlay">
+
+            <div class="promotion-dialog">
+
+                <h3>Choose promotion piece</h3>
+
+                <div class="promotion-pieces">
+
+                    <button @onclick='() => PromoteAsync("Q")'>
+                        @GetPromotionSymbol("Q")
+                    </button>
+
+                    <button @onclick='() => PromoteAsync("R")'>
+                        @GetPromotionSymbol("R")
+                    </button>
+
+                    <button @onclick='() => PromoteAsync("B")'>
+                        @GetPromotionSymbol("B")
+                    </button>
+
+                    <button @onclick='() => PromoteAsync("N")'>
+                        @GetPromotionSymbol("N")
+                    </button>
+
+                </div>
+
+            </div>
+
+        </div>
+    }
+
+</div>
+
+@code
+{
+    [Parameter]
+    public GameDto? Game { get; set; }
+
+    [Parameter]
+    public EventCallback<MoveResultDto> OnMoveCompleted { get; set; }
+
+    private PositionDto? _selectedPosition;
+
+    private MoveDto? _pendingPromotionMove;
+
+    private IReadOnlyCollection<PositionDto> _legalMoves =
+        Array.Empty<PositionDto>();
+
+
+    // ============================================================
+    // ОБНОВЛЕНИЕ СОСТОЯНИЯ КОМПОНЕНТА
+    // ============================================================
+
+    protected override void OnParametersSet()
+    {
+        ClearSelection();
+    }
+
+
+    // ============================================================
+    // Получение фигуры
+    // ============================================================
+
+    private PieceDto? GetPiece(
+        PositionDto position)
+    {
+        return Game?
+            .Pieces
+            .FirstOrDefault(
+                p =>
+                    p.Position.Row == position.Row &&
+                    p.Position.Column == position.Column);
+    }
+
+
+    // ============================================================
+    // Клик по клетке
+    // ============================================================
+
+    private async Task OnSquareClick(
+        PositionDto position)
+    {
+        Console.WriteLine(
+            $"OnSquareClick: {ToSquare(position)}");
+
+        GameDto? game =
+            Game;
+
+        if (game is null)
+            return;
+
+        PieceDto? piece =
+            GetPiece(position);
+
+
+        // --------------------------------------------------------
+        // Ничего не выбрано
+        // --------------------------------------------------------
+
+        if (_selectedPosition is null)
+        {
+            await SelectPiece(
+                position,
+                piece);
+
+            return;
+        }
+
+
+        // --------------------------------------------------------
+        // Проверяем допустимость хода
+        // --------------------------------------------------------
+
+        bool isLegalMove =
+            _legalMoves.Any(
+                p =>
+                    p.Row == position.Row &&
+                    p.Column == position.Column);
+
+        if (isLegalMove)
+        {
+            PieceDto? selectedPiece =
+                GetPiece(_selectedPosition);
+
+            if (selectedPiece is null)
+            {
+                ClearSelection();
+
+                await InvokeAsync(
+                    StateHasChanged);
+
+                return;
+            }
+
+            MoveDto move =
+                new(
+                    _selectedPosition,
+                    position,
+                    null);
+
+
+            // ----------------------------------------------------
+            // Превращение пешки
+            // ----------------------------------------------------
+
+            if (RequiresPromotion(
+                    selectedPiece,
+                    position))
+            {
+                _pendingPromotionMove =
+                    move;
+
+                _selectedPosition = null;
+
+                _legalMoves =
+                    Array.Empty<PositionDto>();
+
+                await InvokeAsync(
+                    StateHasChanged);
+
+                return;
+            }
+
+
+            await ExecuteMoveAsync(
+                move);
+
+            return;
+        }
+
+
+        // --------------------------------------------------------
+        // Кликнули по своей фигуре
+        // --------------------------------------------------------
+
+        if (piece is not null &&
+            piece.Color == game.CurrentTurn)
+        {
+            await SelectPiece(
+                position,
+                piece);
+
+            return;
+        }
+
+
+        // --------------------------------------------------------
+        // Всё остальное
+        // --------------------------------------------------------
+
+        ClearSelection();
+
+        await InvokeAsync(
+            StateHasChanged);
+    }
+
+
+    // ============================================================
+    // Выбор фигуры
+    // ============================================================
+
+    private async Task SelectPiece(
+        PositionDto position,
+        PieceDto? piece)
+    {
+        Console.WriteLine(
+            $"SelectPiece: {ToSquare(position)}, " +
+            $"piece: {piece?.Type}, " +
+            $"color: {piece?.Color}, " +
+            $"current turn: {Game?.CurrentTurn}");
+
+        GameDto? game =
+            Game;
+
+        if (game is null)
+            return;
+
+        if (piece is null)
+            return;
+
+        if (piece.Color != game.CurrentTurn)
+            return;
+
+        try
+        {
+            IReadOnlyCollection<PositionDto> legalMoves =
+                await ChessGameApiClient.GetLegalMovesAsync(
+                    position);
+
+            _selectedPosition =
+                position;
+
+            _legalMoves =
+                legalMoves;
+
+            Console.WriteLine(
+                $"Selected {ToSquare(position)}. " +
+                $"Legal moves: {_legalMoves.Count}");
+
+            foreach (PositionDto move in _legalMoves)
+            {
+                Console.WriteLine(
+                    $"  -> {ToSquare(move)}");
+            }
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"Get legal moves failed for " +
+                $"{ToSquare(position)}:");
+
+            Console.WriteLine(ex);
+
+            ClearSelection();
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+    }
+
+
+    // ============================================================
+    // Выполнение хода
+    // ============================================================
+
+    private async Task ExecuteMoveAsync(
+        MoveDto move)
+    {
+        try
+        {
+            MoveResultDto result =
+                await ChessGameApiClient.MoveAsync(
+                    move);
+
+            ClearSelection();
+
+            await OnMoveCompleted
+                .InvokeAsync(result);
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                ex);
+
+            ClearSelection();
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+    }
+
+
+    // ============================================================
+    // Превращение пешки
+    // ============================================================
+
+    private async Task PromoteAsync(
+        string promotion)
+    {
+        if (_pendingPromotionMove is not MoveDto move)
+            return;
+
+        MoveDto promotionMove =
+            new(
+                move.From,
+                move.To,
+                promotion);
+
+        _pendingPromotionMove =
+            null;
+
+        await ExecuteMoveAsync(
+            promotionMove);
+    }
+
+
+    // ============================================================
+    // Проверка превращения
+    // ============================================================
+
+    private static bool RequiresPromotion(
+        PieceDto piece,
+        PositionDto destination)
+    {
+        if (piece.Type != "Pawn")
+            return false;
+
+        return piece.Color == "White"
+            ? destination.Row == 7
+            : destination.Row == 0;
+    }
+
+
+    // ============================================================
+    // Очистка выбора
+    // ============================================================
+
+    private void ClearSelection()
+    {
+        _selectedPosition =
+            null;
+
+        _legalMoves =
+            Array.Empty<PositionDto>();
+
+        _pendingPromotionMove =
+            null;
+    }
+
+
+    // ============================================================
+    // CSS клетки
+    // ============================================================
+
+    private static string GetSquareClass(
+        bool isLightSquare,
+        bool isSelected,
+        bool isLegalMove,
+        bool isCapture)
+    {
+        List<string> classes =
+            new()
+                {
+            "chess-square",
+
+            isLightSquare
+                ? "light-square"
+                : "dark-square"
+                };
+
+        if (isSelected)
+        {
+            classes.Add(
+                "selected-square");
+        }
+
+        if (isLegalMove)
+        {
+            classes.Add(
+                "legal-move-square");
+        }
+
+        if (isCapture)
+        {
+            classes.Add(
+                "capture-square");
+        }
+
+        return string.Join(
+            " ",
+            classes);
+    }
+
+
+    // ============================================================
+    // Символ фигуры
+    // ============================================================
+
+    private static string GetPieceSymbol(
+        PieceDto piece)
+    {
+        return (piece.Color, piece.Type) switch
+        {
+            ("White", "King") =>
+                "♔",
+
+            ("White", "Queen") =>
+                "♕",
+
+            ("White", "Rook") =>
+                "♖",
+
+            ("White", "Bishop") =>
+                "♗",
+
+            ("White", "Knight") =>
+                "♘",
+
+            ("White", "Pawn") =>
+                "♙",
+
+            ("Black", "King") =>
+                "♚",
+
+            ("Black", "Queen") =>
+                "♛",
+
+            ("Black", "Rook") =>
+                "♜",
+
+            ("Black", "Bishop") =>
+                "♝",
+
+            ("Black", "Knight") =>
+                "♞",
+
+            ("Black", "Pawn") =>
+                "♟",
+
+            _ =>
+                string.Empty
+        };
+    }
+
+
+    // ============================================================
+    // Символ превращения
+    // ============================================================
+
+    private string GetPromotionSymbol(
+        string promotion)
+    {
+        string color =
+            GetPromotionColor();
+
+        return (color, promotion) switch
+        {
+            ("White", "Q") =>
+                "♕",
+
+            ("White", "R") =>
+                "♖",
+
+            ("White", "B") =>
+                "♗",
+
+            ("White", "N") =>
+                "♘",
+
+            ("Black", "Q") =>
+                "♛",
+
+            ("Black", "R") =>
+                "♜",
+
+            ("Black", "B") =>
+                "♝",
+
+            ("Black", "N") =>
+                "♞",
+
+            _ =>
+                string.Empty
+        };
+    }
+
+
+    // ============================================================
+    // Цвет превращаемой пешки
+    // ============================================================
+
+    private string GetPromotionColor()
+    {
+        if (_pendingPromotionMove is not MoveDto move)
+            return "White";
+
+        PieceDto? pawn =
+            GetPiece(move.From);
+
+        return pawn?.Color ?? "White";
+    }
+
+
+    // ============================================================
+    // Отладочное представление клетки
+    // ============================================================
+
+    private static string ToSquare(
+        PositionDto position)
+    {
+        char file =
+            (char)('a' + position.Column);
+
+        int rank =
+            position.Row + 1;
+
+        return $"{file}{rank}";
+    }
+
+}
+```
+
+### ChessGame.Web\Components\Layout\MainLayout.razor
+```razor
+@inherits LayoutComponentBase
+
+@Body
+
+<div id="blazor-error-ui">
+    An unhandled error has occurred.
+    <a href="" class="reload">Reload</a>
+    <a class="dismiss">🗙</a>
+</div>
+
+```
+
+### ChessGame.Web\Components\Pages\Error.razor
+```razor
+@page "/Error"
+@using System.Diagnostics
+
+<PageTitle>Error</PageTitle>
+
+<h1 class="text-danger">Error.</h1>
+<h2 class="text-danger">An error occurred while processing your request.</h2>
+
+@if (ShowRequestId)
+{
+    <p>
+        <strong>Request ID:</strong> <code>@RequestId</code>
+    </p>
+}
+
+<h3>Development Mode</h3>
+<p>
+    Swapping to <strong>Development</strong> environment will display more detailed information about the error that occurred.
+</p>
+<p>
+    <strong>The Development environment shouldn't be enabled for deployed applications.</strong>
+    It can result in displaying sensitive information from exceptions to end users.
+    For local debugging, enable the <strong>Development</strong> environment by setting the <strong>ASPNETCORE_ENVIRONMENT</strong> environment variable to <strong>Development</strong>
+    and restarting the app.
+</p>
+
+@code{
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+    private bool ShowRequestId => !string.IsNullOrEmpty(RequestId);
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}
+
+```
+
+### ChessGame.Web\Components\Pages\Game.razor
+```razor
+@page "/game"
+@rendermode InteractiveServer
+
+@using ChessGame.Contracts.Dto
+@using ChessGame.Web.Components
+@using ChessGame.ApiClient.Services
+
+@inject IChessGameApiClient ChessGameApiClient
+
+<div class="game-page">
+
+    <h1>Chess</h1>
+
+    <div class="game-layout">
+
+        <div class="board-container">
+
+            <ChessBoard Game="ChessGameApiClient.Game"
+                        OnMoveCompleted="MoveCompleted" />
+
+        </div>
+
+        <div class="game-panel">
+
+            <h2>Match</h2>
+
+            @if (ChessGameApiClient.Game != null)
+            {
+                <div class="game-info">
+
+                    <div class="info-row">
+
+                        <span class="info-label">
+                            Move
+                        </span>
+
+                        <span class="info-value">
+                            @ChessGameApiClient.Game.CurrentTurn
+                        </span>
+
+                    </div>
+
+                    <div class="info-row">
+
+                        <span class="info-label">
+                            State
+                        </span>
+
+                        <span class="info-value">
+                            @ChessGameApiClient.Game.State
+                        </span>
+
+                    </div>
+
+                </div>
+
+                @if (_lastEvents.Count > 0)
+                {
+                    <div class="game-events">
+
+                        @foreach (GameEventDto gameEvent in _lastEvents)
+                        {
+                            <div class="@GetEventCssClass(gameEvent.Type)">
+
+                                <div class="event-title">
+                                    @GetEventTitle(gameEvent.Type)
+                                </div>
+
+                                <div class="event-message">
+                                    @gameEvent.Message
+                                </div>
+
+                            </div>
+                        }
+
+                    </div>
+                }
+
+                <div class="move-history">
+
+                    <h3>Move history (SAN)</h3>
+
+                    @if (ChessGameApiClient.Game.Moves.Count == 0)
+                    {
+                        <div class="empty-history">
+                            No moves yet
+                        </div>
+                    }
+                    else
+                    {
+                        @for (
+                       int index = 0;
+                       index < ChessGameApiClient.Game.Moves.Count;
+                       index += 2)
+                        {
+                            MoveRecordDto whiteMove =
+                            ChessGameApiClient.Game.Moves.ElementAt(index);
+
+                            <div class="move-row">
+
+                                <span class="move-number">
+                                    @(index / 2 + 1).
+                                </span>
+
+                                <span class="move-white">
+                                    @whiteMove.San
+                                </span>
+
+                                @if (index + 1 < ChessGameApiClient.Game.Moves.Count)
+                                {
+                                    MoveRecordDto blackMove =
+                                    ChessGameApiClient.Game.Moves.ElementAt(index + 1);
+
+                                    <span class="move-black">
+                                        @blackMove.San
+                                    </span>
+                                }
+
+                            </div>
+                        }
+                    }
+
+                </div>
+            }
+            else
+            {
+                <div class="empty-history">
+                    No game started
+                </div>
+            }
+
+            <button class="new-game-button"
+                    @onclick="NewGame">
+
+                New Game
+
+            </button>
+
+            <button class="undo-button"
+                    @onclick="Undo"
+                    disabled="@(ChessGameApiClient.Game?.Moves.Count == 0)">
+
+                ↶ Undo move
+
+            </button>
+
+        </div>
+
+    </div>
+
+</div>
+
+@code
+{
+    private IReadOnlyCollection<GameEventDto> _lastEvents =
+    Array.Empty<GameEventDto>();
+
+    // ============================================================
+    // INITIALIZATION
+    // ============================================================
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (ChessGameApiClient.Game == null)
+        {
+            await ChessGameApiClient.NewGameAsync();
+        }
+    }
+
+
+    // ============================================================
+    // NEW GAME
+    // ============================================================
+
+    private async Task NewGame()
+    {
+        await ChessGameApiClient.NewGameAsync();
+
+        _lastEvents =
+            Array.Empty<GameEventDto>();
+
+        await InvokeAsync(
+            StateHasChanged);
+    }
+
+
+    // ============================================================
+    // UNDO
+    // ============================================================
+
+    private async Task Undo()
+    {
+        Console.WriteLine("=== UNDO BUTTON CLICKED ===");
+
+        if (ChessGameApiClient.Game == null)
+        {
+            Console.WriteLine("UNDO: Game == null");
+            return;
+        }
+
+        Console.WriteLine(
+            $"UNDO: GameId = {ChessGameApiClient.GameId}");
+
+        Console.WriteLine(
+            $"UNDO: Moves before = {ChessGameApiClient.Game.Moves.Count}");
+
+        try
+        {
+            GameDto game =
+                await ChessGameApiClient.UndoAsync();
+
+            Console.WriteLine(
+                $"UNDO: Moves after = {game.Moves.Count}");
+
+            Console.WriteLine(
+                $"UNDO: CurrentTurn = {game.CurrentTurn}");
+
+            _lastEvents =
+                Array.Empty<GameEventDto>();
+
+            await InvokeAsync(
+                StateHasChanged);
+
+            Console.WriteLine("=== UNDO COMPLETED ===");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("=== UNDO ERROR ===");
+            Console.WriteLine(ex);
+
+            _lastEvents =
+                new[]
+                {
+                new GameEventDto(
+                    "Error",
+                    $"Undo error: {ex.Message}")
+                        };
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+    }
+
+
+    // ============================================================
+    // MOVE COMPLETED
+    // ============================================================
+
+    private async Task MoveCompleted(
+        MoveResultDto result)
+    {
+        _lastEvents =
+            result.Events.ToArray();
+
+        await InvokeAsync(
+            StateHasChanged);
+    }
+
+
+    // ============================================================
+    // EVENT TITLE
+    // ============================================================
+
+    private static string GetEventTitle(
+        string eventType)
+    {
+        return eventType switch
+        {
+            "Capture" =>
+                "Capture",
+
+            "Check" =>
+                "Check",
+
+            "Checkmate" =>
+                "Checkmate",
+
+            "Stalemate" =>
+                "Stalemate",
+
+            "Castle" =>
+                "Castling",
+
+            "Promotion" =>
+                "Promotion",
+
+            "EnPassant" =>
+                "En Passant",
+
+            "Draw" =>
+                "Draw",
+
+            _ =>
+                "Game Event"
+        };
+    }
+
+
+    // ============================================================
+    // EVENT CSS
+    // ============================================================
+
+    private static string GetEventCssClass(
+        string eventType)
+    {
+        return eventType switch
+        {
+            "Capture" =>
+                "game-event event-capture",
+
+            "Check" =>
+                "game-event event-check",
+
+            "Checkmate" =>
+                "game-event event-checkmate",
+
+            "Stalemate" =>
+                "game-event event-stalemate",
+
+            "Castle" =>
+                "game-event event-castle",
+
+            "Promotion" =>
+                "game-event event-promotion",
+
+            "EnPassant" =>
+                "game-event event-en-passant",
+
+            "Draw" =>
+                "game-event event-draw",
+
+            _ =>
+                "game-event"
+        };
+    }
+}
+```
+
+### ChessGame.Web\Components\Pages\Home.razor
+```razor
+@page "/"
+
+<PageTitle>Home</PageTitle>
+
+<h1>Hello, world!</h1>
+
+Welcome to your new app.
+
+```
+
+### ChessGame.Web\Components\Routes.razor
+```razor
+<Router AppAssembly="typeof(Program).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+</Router>
+
+```
+
+### ChessGame.Web\Models\BoardSquare.cs
+```csharp
+namespace ChessGame.Web.Models
+{
+    public class BoardSquare
+    {
+    }
+}
+
+```
+
+### ChessGame.Web\Program.cs
+```csharp
+using ChessGame.Web.Components;
+using ChessGame.ApiClient.Services; // пространство имён вашего API-клиента
+
+var builder = WebApplication.CreateBuilder(args);
+
+// ============================================================
+// Blazor Server
+// ============================================================
+
+builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+
+// ============================================================
+// HTTP клиент для API
+// ============================================================
+
+builder.Services.AddScoped<HttpClient>(_ =>
+    new HttpClient
+    {
+        BaseAddress = new Uri("https://localhost:7059/") // замените на реальный адрес сервера
+    });
+
+// ============================================================
+// Регистрация API-клиента
+// ============================================================
+
+builder.Services.AddScoped<IChessGameApiClient, ChessGameApiClient>();
+
+var app = builder.Build();
+
+// ============================================================
+// HTTP pipeline
+// ============================================================
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error", createScopeForErrors: true);
+}
+
+app.UseStaticFiles();
+app.UseAntiforgery();
+
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+
+app.Run();
+```
+
+### ChessGame.Web\Properties\launchSettings.json
+```json
+{
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "launchUrl": "game",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "dotnetRunMessages": true,
+      "applicationUrl": "https://localhost:5175"
+    },
+    "IIS Express": {
+      "commandName": "IISExpress",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  },
+  "$schema": "http://json.schemastore.org/launchsettings.json",
+  "iisSettings": {
+    "windowsAuthentication": false,
+    "anonymousAuthentication": true,
+    "iisExpress": {
+      "applicationUrl": "http://localhost:34188",
+      "sslPort": 0
+    }
+  }
+}
+```
+
