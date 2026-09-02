@@ -1,5 +1,5 @@
 # Solution Dump: ChessGame_New
-Сгенерировано: 2026-09-02 11:22
+Сгенерировано: 2026-09-02 23:55
 
 ## Структура проекта
 ``
@@ -30,6 +30,7 @@
   - ChessGame.Server/
     - bin/
     - Controllers/
+    - Hubs/
     - Models/
     - obj/
     - Properties/
@@ -79,37 +80,71 @@ using System.Net.Http.Json;
 
 namespace ChessGame.ApiClient.Services
 {
-
     public sealed class ChessGameApiClient : IChessGameApiClient
     {
         private readonly HttpClient _httpClient;
 
+        private bool _isOnlineGameReady;
+
         public Guid? GameId { get; private set; }
+
         public GameDto? Game { get; private set; }
 
-        public ChessGameApiClient(HttpClient httpClient)
+        public Guid? PlayerId { get; private set; }
+
+        public string? PlayerColor { get; private set; }
+
+        public bool IsOnlineGame =>
+            PlayerId.HasValue;
+
+        public bool IsOnlineGameReady =>
+            IsOnlineGame &&
+            _isOnlineGameReady;
+
+        public ChessGameApiClient(
+            HttpClient httpClient)
         {
             _httpClient = httpClient;
         }
 
+        // ============================================================
+        // LOCAL GAME
+        // ============================================================
+
         public async Task<GameDto> NewGameAsync()
         {
-            HttpResponseMessage response = await _httpClient.PostAsync("api/games", null);
+            HttpResponseMessage response =
+                await _httpClient.PostAsync(
+                    "api/games",
+                    null);
+
             response.EnsureSuccessStatusCode();
 
-            GameDto game = await response.Content.ReadFromJsonAsync<GameDto>()
-                ?? throw new InvalidOperationException("Server returned empty game.");
+            GameDto game =
+                await response.Content
+                    .ReadFromJsonAsync<GameDto>()
+                ?? throw new InvalidOperationException(
+                    "Server returned empty game.");
 
             GameId = game.Id;
             Game = game;
 
+            PlayerId = null;
+            PlayerColor = null;
+            _isOnlineGameReady = false;
+
             return game;
         }
 
-        public async Task<GameDto> LoadGameAsync(Guid gameId)
+        public async Task<GameDto> LoadGameAsync(
+            Guid gameId)
         {
-            GameDto game = await _httpClient.GetFromJsonAsync<GameDto>($"api/games/{gameId}")
-                ?? throw new InvalidOperationException("Server returned empty game.");
+            GameDto game =
+                await _httpClient
+                    .GetFromJsonAsync<GameDto>(
+                        $"api/games/{gameId}")
+                ?? throw new InvalidOperationException(
+                    "Server returned empty game.");
 
             GameId = game.Id;
             Game = game;
@@ -117,75 +152,326 @@ namespace ChessGame.ApiClient.Services
             return game;
         }
 
-        public async Task<MoveResultDto> MoveAsync(MoveDto move)
+        public async Task<MoveResultDto> MoveAsync(
+            MoveDto move)
         {
             EnsureGame();
 
-            MoveResultDto result = await PostAsync<MoveDto, MoveResultDto>($"api/games/{GameId}/move", move);
+            MoveResultDto result =
+                await PostAsync<MoveDto, MoveResultDto>(
+                    $"api/games/{GameId}/move",
+                    move);
 
-            // Обновляем состояние игры после хода
-            await LoadGameAsync(GameId!.Value);
+            await LoadGameAsync(
+                GameId!.Value);
 
             return result;
         }
+
+        // ============================================================
+        // ONLINE GAME
+        // ============================================================
+
+        public async Task<OnlineGameDto>
+            CreateOnlineGameAsync(
+                Guid playerId)
+        {
+            if (playerId == Guid.Empty)
+            {
+                throw new ArgumentException(
+                    "PlayerId is required.",
+                    nameof(playerId));
+            }
+
+            OnlineGameDto onlineGame =
+                await PostAsync<object, OnlineGameDto>(
+                    $"api/games/online?playerId={playerId}",
+                    new { });
+
+            SetOnlineGameState(
+                onlineGame);
+
+            return onlineGame;
+        }
+
+        public async Task<OnlineGameDto>
+            JoinOnlineGameAsync(
+                Guid gameId,
+                Guid playerId)
+        {
+            if (gameId == Guid.Empty)
+            {
+                throw new ArgumentException(
+                    "GameId is required.",
+                    nameof(gameId));
+            }
+
+            if (playerId == Guid.Empty)
+            {
+                throw new ArgumentException(
+                    "PlayerId is required.",
+                    nameof(playerId));
+            }
+
+            JoinGameRequest request =
+                new(playerId);
+
+            OnlineGameDto onlineGame =
+                await PostAsync<
+                    JoinGameRequest,
+                    OnlineGameDto>(
+                    $"api/games/{gameId}/join",
+                    request);
+
+            SetOnlineGameState(
+                onlineGame);
+
+            return onlineGame;
+        }
+
+        public async Task<OnlineGameDto>
+            LoadOnlineGameAsync()
+        {
+            EnsureOnlineGame();
+
+            OnlineGameDto onlineGame =
+                await _httpClient
+                    .GetFromJsonAsync<OnlineGameDto>(
+                        $"api/games/{GameId}/online" +
+                        $"?playerId={PlayerId}")
+                ?? throw new InvalidOperationException(
+                    "Server returned empty online game.");
+
+            SetOnlineGameState(
+                onlineGame);
+
+            return onlineGame;
+        }
+
+        public async Task<MoveResultDto>
+            OnlineMoveAsync(
+                MoveDto move)
+        {
+            EnsureOnlineGame();
+
+            if (!IsOnlineGameReady)
+            {
+                throw new InvalidOperationException(
+                    "Online game is waiting for another player.");
+            }
+
+            MoveResultDto result =
+                await PostAsync<MoveDto, MoveResultDto>(
+                    $"api/games/{GameId}/online-move?playerId={PlayerId}",
+                    move);
+
+            await LoadGameAsync(
+                GameId!.Value);
+
+            return result;
+        }
+
+        public async Task<IReadOnlyCollection<PositionDto>>
+            GetOnlineLegalMovesAsync(
+                PositionDto position)
+        {
+            EnsureOnlineGame();
+
+            if (!IsOnlineGameReady)
+            {
+                return Array.Empty<PositionDto>();
+            }
+
+            string square =
+                ToSquare(position);
+
+            Console.WriteLine(
+                $"GetOnlineLegalMovesAsync: " +
+                $"GameId={GameId}, " +
+                $"PlayerId={PlayerId}, " +
+                $"Color={PlayerColor}, " +
+                $"square={square}");
+
+            PositionDto[] moves =
+                await GetFromJsonAsync<PositionDto[]>(
+                    $"api/games/{GameId}/online-legalmoves/{square}" +
+                    $"?playerId={PlayerId}");
+
+            return moves;
+        }
+
+        // ============================================================
+        // UNDO
+        // ============================================================
 
         public async Task<GameDto> UndoAsync()
         {
             EnsureGame();
 
-            GameDto game = await PostAsync<object, GameDto>($"api/games/{GameId}/undo", new { });
+            GameDto game =
+                await PostAsync<object, GameDto>(
+                    $"api/games/{GameId}/undo",
+                    new { });
+
             Game = game;
 
             return game;
         }
 
-        public async Task<IReadOnlyCollection<PositionDto>> GetLegalMovesAsync(PositionDto position)
+        // ============================================================
+        // LOCAL LEGAL MOVES
+        // ============================================================
+
+        public async Task<IReadOnlyCollection<PositionDto>>
+            GetLegalMovesAsync(
+                PositionDto position)
         {
             EnsureGame();
-            Console.WriteLine($"GetLegalMovesAsync: GameId={GameId}, square={ToSquare(position)}");
 
-            PositionDto[] moves = await GetFromJsonAsync<PositionDto[]>($"api/games/{GameId}/legalmoves/{ToSquare(position)}");
+            Console.WriteLine(
+                $"GetLegalMovesAsync: " +
+                $"GameId={GameId}, " +
+                $"square={ToSquare(position)}");
+
+            PositionDto[] moves =
+                await GetFromJsonAsync<PositionDto[]>(
+                    $"api/games/{GameId}/legalmoves/{ToSquare(position)}");
+
             return moves;
         }
+
+        // ============================================================
+        // DELETE
+        // ============================================================
 
         public async Task DeleteGameAsync()
         {
             EnsureGame();
 
-            HttpResponseMessage response = await _httpClient.DeleteAsync($"api/games/{GameId}");
+            HttpResponseMessage response =
+                await _httpClient.DeleteAsync(
+                    $"api/games/{GameId}");
+
             response.EnsureSuccessStatusCode();
 
             GameId = null;
             Game = null;
+
+            PlayerId = null;
+            PlayerColor = null;
+            _isOnlineGameReady = false;
         }
 
-        private async Task<TResponse> PostAsync<TRequest, TResponse>(string url, TRequest request)
+        // ============================================================
+        // ONLINE STATE
+        // ============================================================
+
+        private void SetOnlineGameState(
+            OnlineGameDto onlineGame)
         {
-            HttpResponseMessage response = await _httpClient.PostAsJsonAsync(url, request);
+            GameId =
+                onlineGame.Game.Id;
+
+            Game =
+                onlineGame.Game;
+
+            PlayerId =
+                onlineGame.PlayerId;
+
+            _isOnlineGameReady =
+                onlineGame.Ready;
+
+            if (onlineGame.WhitePlayerId ==
+                onlineGame.PlayerId)
+            {
+                PlayerColor = "White";
+            }
+            else if (onlineGame.BlackPlayerId ==
+                     onlineGame.PlayerId)
+            {
+                PlayerColor = "Black";
+            }
+            else
+            {
+                PlayerColor = null;
+            }
+        }
+
+        // ============================================================
+        // HTTP HELPERS
+        // ============================================================
+
+        private async Task<TResponse>
+            PostAsync<TRequest, TResponse>(
+                string url,
+                TRequest request)
+        {
+            HttpResponseMessage response =
+                await _httpClient
+                    .PostAsJsonAsync(
+                        url,
+                        request);
+
             response.EnsureSuccessStatusCode();
 
-            return await response.Content.ReadFromJsonAsync<TResponse>()
-                ?? throw new InvalidOperationException("Server returned empty response.");
+            return await response.Content
+                .ReadFromJsonAsync<TResponse>()
+                ?? throw new InvalidOperationException(
+                    "Server returned empty response.");
         }
 
-        private async Task<TResponse> GetFromJsonAsync<TResponse>(string url)
+        private async Task<TResponse>
+            GetFromJsonAsync<TResponse>(
+                string url)
         {
-            return await _httpClient.GetFromJsonAsync<TResponse>(url)
-                ?? throw new InvalidOperationException("Server returned empty response.");
+            return await _httpClient
+                .GetFromJsonAsync<TResponse>(
+                    url)
+                ?? throw new InvalidOperationException(
+                    "Server returned empty response.");
         }
 
-        private static string ToSquare(PositionDto position)
+        // ============================================================
+        // POSITION
+        // ============================================================
+
+        private static string ToSquare(
+            PositionDto position)
         {
-            char file = (char)('a' + position.Column);
-            int rank = position.Row + 1;
+            char file =
+                (char)('a' + position.Column);
+
+            int rank =
+                position.Row + 1;
+
             return $"{file}{rank}";
         }
+
+        // ============================================================
+        // VALIDATION
+        // ============================================================
 
         private void EnsureGame()
         {
             if (GameId == null)
             {
-                throw new InvalidOperationException("Game has not been created.");
+                throw new InvalidOperationException(
+                    "Game has not been created.");
+            }
+        }
+
+        private void EnsureOnlineGame()
+        {
+            if (GameId == null)
+            {
+                throw new InvalidOperationException(
+                    "Online game has not been created.");
+            }
+
+            if (PlayerId == null)
+            {
+                throw new InvalidOperationException(
+                    "Player has not been assigned to the online game.");
             }
         }
     }
@@ -198,17 +484,50 @@ using ChessGame.Contracts.Dto;
 
 namespace ChessGame.ApiClient.Services
 {
-
     public interface IChessGameApiClient
     {
         Guid? GameId { get; }
+
         GameDto? Game { get; }
 
+        Guid? PlayerId { get; }
+
+        string? PlayerColor { get; }
+
+        bool IsOnlineGame { get; }
+
+        bool IsOnlineGameReady { get; }
+
         Task<GameDto> NewGameAsync();
-        Task<GameDto> LoadGameAsync(Guid gameId);
-        Task<MoveResultDto> MoveAsync(MoveDto move);
+
+        Task<GameDto> LoadGameAsync(
+            Guid gameId);
+
+        Task<MoveResultDto> MoveAsync(
+            MoveDto move);
+
+        Task<OnlineGameDto> CreateOnlineGameAsync(
+            Guid playerId);
+
+        Task<OnlineGameDto> JoinOnlineGameAsync(
+            Guid gameId,
+            Guid playerId);
+
+        Task<OnlineGameDto> LoadOnlineGameAsync();
+
+        Task<MoveResultDto> OnlineMoveAsync(
+            MoveDto move);
+
+        Task<IReadOnlyCollection<PositionDto>>
+            GetOnlineLegalMovesAsync(
+                PositionDto position);
+
         Task<GameDto> UndoAsync();
-        Task<IReadOnlyCollection<PositionDto>> GetLegalMovesAsync(PositionDto position);
+
+        Task<IReadOnlyCollection<PositionDto>>
+            GetLegalMovesAsync(
+                PositionDto position);
+
         Task DeleteGameAsync();
     }
 }
@@ -252,10 +571,15 @@ namespace ChessGame.Application.Games
     {
         private readonly GameManager _gameManager;
 
-        public ChessGameService(GameManager gameManager)
+        public ChessGameService(
+            GameManager gameManager)
         {
             _gameManager = gameManager;
         }
+
+        // ============================================================
+        // CREATE LOCAL GAME
+        // ============================================================
 
         public GameDto CreateGame()
         {
@@ -267,7 +591,68 @@ namespace ChessGame.Application.Games
                 session.Game);
         }
 
-        public GameDto GetGame(Guid gameId)
+        // ============================================================
+        // CREATE ONLINE GAME
+        // ============================================================
+
+        public OnlineGameDto CreateOnlineGame(
+            Guid playerId)
+        {
+            GameSession session =
+                _gameManager.CreateOnlineGame(
+                    playerId);
+
+            return MapOnlineGame(
+                session,
+                playerId);
+        }
+
+        // ============================================================
+        // JOIN ONLINE GAME
+        // ============================================================
+
+        public OnlineGameDto JoinGame(
+            Guid gameId,
+            Guid playerId)
+        {
+            GameSession session =
+                GetRequiredGame(gameId);
+
+            _gameManager.JoinGame(
+                gameId,
+                playerId);
+
+            return MapOnlineGame(
+                session,
+                playerId);
+        }
+
+        // ============================================================
+        // GET ONLINE GAME
+        // ============================================================
+
+        public OnlineGameDto GetOnlineGame(
+            Guid gameId,
+            Guid playerId)
+        {
+            GameSession session =
+                GetRequiredGame(gameId);
+
+            GetRequiredPlayer(
+                session,
+                playerId);
+
+            return MapOnlineGame(
+                session,
+                playerId);
+        }
+
+        // ============================================================
+        // GET GAME
+        // ============================================================
+
+        public GameDto GetGame(
+            Guid gameId)
         {
             GameSession session =
                 GetRequiredGame(gameId);
@@ -277,7 +662,13 @@ namespace ChessGame.Application.Games
                 session.Game);
         }
 
-        public MoveResultDto MakeMove(Guid gameId, MoveDto moveDto)
+        // ============================================================
+        // LOCAL GAME
+        // ============================================================
+
+        public MoveResultDto MakeMove(
+            Guid gameId,
+            MoveDto moveDto)
         {
             GameSession session =
                 GetRequiredGame(gameId);
@@ -294,7 +685,83 @@ namespace ChessGame.Application.Games
             return MapMoveResult(result);
         }
 
-        public GameDto UndoMove(Guid gameId)
+        // ============================================================
+        // ONLINE GAME
+        // ============================================================
+
+        public MoveResultDto MakeOnlineMove(
+            Guid gameId,
+            Guid playerId,
+            MoveDto moveDto)
+        {
+            GameSession session =
+                GetRequiredGame(gameId);
+
+            GameParticipant player =
+                GetRequiredPlayer(
+                    session,
+                    playerId);
+
+            if (session.WhitePlayer == null ||
+                session.BlackPlayer == null)
+            {
+                throw new InvalidOperationException(
+                    "The game is waiting for another player.");
+            }
+
+            if (session.Game.IsFinished)
+            {
+                throw new InvalidOperationException(
+                    "The game has already finished.");
+            }
+
+            if (session.Game.CurrentTurn != player.Color)
+            {
+                throw new InvalidOperationException(
+                    $"It is {session.Game.CurrentTurn} player's turn.");
+            }
+
+            Position from =
+                new(
+                    moveDto.From.Row,
+                    moveDto.From.Column);
+
+            ChessPiece? piece =
+                session.Game
+                    .GetAllPieces()
+                    .FirstOrDefault(
+                        p => p.Position == from);
+
+            if (piece == null)
+            {
+                throw new InvalidOperationException(
+                    "There is no piece on the selected square.");
+            }
+
+            if (piece.Color != player.Color)
+            {
+                throw new InvalidOperationException(
+                    "You can move only your own pieces.");
+            }
+
+            Move move =
+                MapMove(moveDto);
+
+            MoveResult result =
+                session.Game.Move(move);
+
+            session.LastActivity =
+                DateTime.UtcNow;
+
+            return MapMoveResult(result);
+        }
+
+        // ============================================================
+        // UNDO
+        // ============================================================
+
+        public GameDto UndoMove(
+            Guid gameId)
         {
             GameSession session =
                 GetRequiredGame(gameId);
@@ -309,25 +776,98 @@ namespace ChessGame.Application.Games
                 session.Game);
         }
 
-        public IReadOnlyCollection<PositionDto> GetLegalMoves(Guid gameId, PositionDto positionDto)
+        // ============================================================
+        // LEGAL MOVES
+        // ============================================================
+
+        public IReadOnlyCollection<PositionDto> GetLegalMoves(
+            Guid gameId,
+            PositionDto positionDto)
         {
             GameSession session =
                 GetRequiredGame(gameId);
 
-            Position position = new(
-                positionDto.Row,
-                positionDto.Column);
+            Position position =
+                new(
+                    positionDto.Row,
+                    positionDto.Column);
 
             return session.Game
                 .GetLegalMoves(position)
-                .Select(move =>
-                    new PositionDto(
-                        move.To.Row,
-                        move.To.Column))
+                .Select(
+                    move =>
+                        new PositionDto(
+                            move.To.Row,
+                            move.To.Column))
                 .ToArray();
         }
 
-        public bool DeleteGame(Guid gameId)
+        // ============================================================
+        // ONLINE LEGAL MOVES
+        // ============================================================
+
+        public IReadOnlyCollection<PositionDto> GetOnlineLegalMoves(
+            Guid gameId,
+            Guid playerId,
+            PositionDto positionDto)
+        {
+            GameSession session =
+                GetRequiredGame(gameId);
+
+            GameParticipant player =
+                GetRequiredPlayer(
+                    session,
+                    playerId);
+
+            if (session.WhitePlayer == null ||
+                session.BlackPlayer == null)
+            {
+                return Array.Empty<PositionDto>();
+            }
+
+            if (session.Game.IsFinished)
+            {
+                return Array.Empty<PositionDto>();
+            }
+
+            if (session.Game.CurrentTurn != player.Color)
+            {
+                return Array.Empty<PositionDto>();
+            }
+
+            Position position =
+                new(
+                    positionDto.Row,
+                    positionDto.Column);
+
+            ChessPiece? piece =
+                session.Game
+                    .GetAllPieces()
+                    .FirstOrDefault(
+                        p => p.Position == position);
+
+            if (piece == null ||
+                piece.Color != player.Color)
+            {
+                return Array.Empty<PositionDto>();
+            }
+
+            return session.Game
+                .GetLegalMoves(position)
+                .Select(
+                    move =>
+                        new PositionDto(
+                            move.To.Row,
+                            move.To.Column))
+                .ToArray();
+        }
+
+        // ============================================================
+        // GAMES
+        // ============================================================
+
+        public bool DeleteGame(
+            Guid gameId)
         {
             return _gameManager.Remove(gameId);
         }
@@ -336,36 +876,63 @@ namespace ChessGame.Application.Games
         {
             return _gameManager
                 .GetAll()
-                .Select(session => new GameInfoDto
-                {
-                    Id = session.Id,
+                .Select(
+                    session =>
+                        new GameInfoDto
+                        {
+                            Id = session.Id,
 
-                    CurrentTurn =
-                        session.Game.CurrentTurn.ToString(),
+                            CurrentTurn =
+                                session.Game.CurrentTurn.ToString(),
 
-                    LastActivity =
-                        session.LastActivity,
+                            LastActivity =
+                                session.LastActivity,
 
-                    WhitePieces =
-                        session.Game
-                            .GetPieces(PieceColor.White)
-                            .Count(),
+                            WhitePieces =
+                                session.Game
+                                    .GetPieces(PieceColor.White)
+                                    .Count(),
 
-                    BlackPieces =
-                        session.Game
-                            .GetPieces(PieceColor.Black)
-                            .Count(),
+                            BlackPieces =
+                                session.Game
+                                    .GetPieces(PieceColor.Black)
+                                    .Count(),
 
-                    Finished =
-                        session.Game.IsFinished,
+                            Finished =
+                                session.Game.IsFinished,
 
-                    State =
-                        session.Game.State.ToString()
-                })
+                            State =
+                                session.Game.State.ToString()
+                        })
                 .ToArray();
         }
 
-        private GameSession GetRequiredGame(Guid gameId)
+        // ============================================================
+        // PLAYER VALIDATION
+        // ============================================================
+
+        private static GameParticipant GetRequiredPlayer(
+            GameSession session,
+            Guid playerId)
+        {
+            GameParticipant? player =
+                session.GetPlayer(playerId);
+
+            if (player == null)
+            {
+                throw new InvalidOperationException(
+                    $"Player '{playerId}' is not participating in game '{session.Id}'.");
+            }
+
+            return player;
+        }
+
+        // ============================================================
+        // GAME LOOKUP
+        // ============================================================
+
+        private GameSession GetRequiredGame(
+            Guid gameId)
         {
             GameSession? session =
                 _gameManager.Get(gameId);
@@ -380,18 +947,21 @@ namespace ChessGame.Application.Games
         }
 
         // ============================================================
-        // Mapping: Application DTO -> Core
+        // MAPPING: APPLICATION DTO -> CORE
         // ============================================================
 
-        private static Move MapMove(MoveDto dto)
+        private static Move MapMove(
+            MoveDto dto)
         {
-            Position from = new(
-                dto.From.Row,
-                dto.From.Column);
+            Position from =
+                new(
+                    dto.From.Row,
+                    dto.From.Column);
 
-            Position to = new(
-                dto.To.Row,
-                dto.To.Column);
+            Position to =
+                new(
+                    dto.To.Row,
+                    dto.To.Column);
 
             PromotionPiece? promotion =
                 ParsePromotion(dto.Promotion);
@@ -402,7 +972,8 @@ namespace ChessGame.Application.Games
                 promotion);
         }
 
-        private static PromotionPiece? ParsePromotion(string? promotion)
+        private static PromotionPiece? ParsePromotion(
+            string? promotion)
         {
             if (string.IsNullOrWhiteSpace(promotion))
             {
@@ -429,10 +1000,12 @@ namespace ChessGame.Application.Games
         }
 
         // ============================================================
-        // Mapping: Core -> Application DTO
+        // MAPPING: CORE -> APPLICATION DTO
         // ============================================================
 
-        private static GameDto MapGame(Guid gameId, Game game)
+        private static GameDto MapGame(
+            Guid gameId,
+            Game game)
         {
             IReadOnlyCollection<PieceDto> pieces =
                 game.GetAllPieces()
@@ -457,7 +1030,8 @@ namespace ChessGame.Application.Games
                 moves);
         }
 
-        private static PieceDto MapPiece(ChessPiece piece)
+        private static PieceDto MapPiece(
+            ChessPiece piece)
         {
             return new PieceDto(
                 piece.GetType().Name,
@@ -467,14 +1041,16 @@ namespace ChessGame.Application.Games
                     piece.Position.Column));
         }
 
-        private static MoveRecordDto MapMoveRecord(MoveRecord record)
+        private static MoveRecordDto MapMoveRecord(
+            MoveRecord record)
         {
             return new MoveRecordDto(
                 MapMove(record.Move),
                 record.Notation);
         }
 
-        private static MoveDto MapMove(Move move)
+        private static MoveDto MapMove(
+            Move move)
         {
             return new MoveDto(
                 new PositionDto(
@@ -488,7 +1064,8 @@ namespace ChessGame.Application.Games
                 move.Promotion?.ToString());
         }
 
-        private static MoveResultDto MapMoveResult(MoveResult result)
+        private static MoveResultDto MapMoveResult(
+            MoveResult result)
         {
             IReadOnlyCollection<GameEventDto> events =
                 result.Events
@@ -515,11 +1092,35 @@ namespace ChessGame.Application.Games
                 events);
         }
 
-        private static GameEventDto MapEvent(GameEvent gameEvent)
+        private static GameEventDto MapEvent(
+            GameEvent gameEvent)
         {
             return new GameEventDto(
                 gameEvent.Type.ToString(),
-                gameEvent.Message);
+                gameEvent.Message ?? string.Empty);
+        }
+
+        // ============================================================
+        // MAPPING: ONLINE GAME
+        // ============================================================
+
+        private static OnlineGameDto MapOnlineGame(
+            GameSession session,
+            Guid playerId)
+        {
+            return new OnlineGameDto(
+                MapGame(
+                    session.Id,
+                    session.Game),
+
+                playerId,
+
+                session.WhitePlayer?.Player.Id,
+
+                session.BlackPlayer?.Player.Id,
+
+                session.WhitePlayer != null &&
+                session.BlackPlayer != null);
         }
     }
 }
@@ -527,8 +1128,8 @@ namespace ChessGame.Application.Games
 
 ### ChessGame.Application\Games\GameManager.cs
 ```csharp
-using ChessGame.Core.Setup;
 using ChessGame.Core;
+using ChessGame.Core.Setup;
 
 namespace ChessGame.Application.Games
 {
@@ -544,17 +1145,52 @@ namespace ChessGame.Application.Games
 
         public GameSession CreateGame(Board board)
         {
-            Game game = new(board);
+            Game game =
+                new(board);
 
-            GameSession session = new(
-                Guid.NewGuid(),
-                game);
+            GameSession session =
+                new(
+                    Guid.NewGuid(),
+                    game);
 
             _games.Add(
                 session.Id,
                 session);
 
             return session;
+        }
+
+        public GameSession CreateOnlineGame(
+            Guid playerId)
+        {
+            GameSession session =
+                CreateGame();
+
+            Player player =
+                new(playerId);
+
+            session.AddPlayer(player);
+
+            return session;
+        }
+
+        public GameParticipant JoinGame(
+            Guid gameId,
+            Guid playerId)
+        {
+            GameSession? session =
+                Get(gameId);
+
+            if (session == null)
+            {
+                throw new KeyNotFoundException(
+                    $"Game '{gameId}' was not found.");
+            }
+
+            Player player =
+                new(playerId);
+
+            return session.AddPlayer(player);
         }
 
         public GameSession? Get(Guid id)
@@ -577,17 +1213,42 @@ namespace ChessGame.Application.Games
         }
     }
 }
+```
 
+### ChessGame.Application\Games\GameParticipant.cs
+```csharp
+using ChessGame.Core.Pieces;
+
+namespace ChessGame.Application.Games
+{
+    public sealed class GameParticipant
+    {
+        public Player Player { get; }
+
+        public PieceColor Color { get; }
+
+        public GameParticipant(
+            Player player,
+            PieceColor color)
+        {
+            Player = player;
+            Color = color;
+        }
+    }
+}
 ```
 
 ### ChessGame.Application\Games\GameSession.cs
 ```csharp
 using ChessGame.Core;
+using ChessGame.Core.Pieces;
 
 namespace ChessGame.Application.Games
 {
     public sealed class GameSession
     {
+        private readonly List<GameParticipant> _participants = [];
+
         public Guid Id { get; }
 
         public Game Game { get; }
@@ -595,6 +1256,19 @@ namespace ChessGame.Application.Games
         public DateTime Created { get; }
 
         public DateTime LastActivity { get; set; }
+
+        public IReadOnlyCollection<GameParticipant> Participants =>
+            _participants.AsReadOnly();
+
+        public GameParticipant? WhitePlayer =>
+            _participants.FirstOrDefault(
+                participant =>
+                    participant.Color == PieceColor.White);
+
+        public GameParticipant? BlackPlayer =>
+            _participants.FirstOrDefault(
+                participant =>
+                    participant.Color == PieceColor.Black);
 
         public GameSession(
             Guid id,
@@ -606,9 +1280,53 @@ namespace ChessGame.Application.Games
             Created = DateTime.UtcNow;
             LastActivity = Created;
         }
+
+        public bool HasPlayer(Guid playerId)
+        {
+            return _participants.Any(
+                participant =>
+                    participant.Player.Id == playerId);
+        }
+
+        public GameParticipant? GetPlayer(Guid playerId)
+        {
+            return _participants.FirstOrDefault(
+                participant =>
+                    participant.Player.Id == playerId);
+        }
+
+        public GameParticipant AddPlayer(Player player)
+        {
+            if (HasPlayer(player.Id))
+            {
+                throw new InvalidOperationException(
+                    $"Player '{player.Id}' is already participating in game '{Id}'.");
+            }
+
+            if (_participants.Count >= 2)
+            {
+                throw new InvalidOperationException(
+                    $"Game '{Id}' already has two players.");
+            }
+
+            PieceColor color =
+                _participants.Count == 0
+                    ? PieceColor.White
+                    : PieceColor.Black;
+
+            GameParticipant participant =
+                new(
+                    player,
+                    color);
+
+            _participants.Add(participant);
+
+            LastActivity = DateTime.UtcNow;
+
+            return participant;
+        }
     }
 }
-
 ```
 
 ### ChessGame.Application\Games\IChessGameService.cs
@@ -621,20 +1339,63 @@ namespace ChessGame.Application.Games
     {
         GameDto CreateGame();
 
-        GameDto GetGame(Guid gameId);
+        OnlineGameDto CreateOnlineGame(
+            Guid playerId);
 
-        MoveResultDto MakeMove(Guid gameId, MoveDto move);
+        OnlineGameDto JoinGame(
+            Guid gameId,
+            Guid playerId);
 
-        GameDto UndoMove(Guid gameId);
+        OnlineGameDto GetOnlineGame(
+            Guid gameId,
+            Guid playerId);
 
-        IReadOnlyCollection<PositionDto> GetLegalMoves(Guid gameId, PositionDto positionDto);
+        GameDto GetGame(
+            Guid gameId);
 
-        bool DeleteGame(Guid gameId);
+        MoveResultDto MakeMove(
+            Guid gameId,
+            MoveDto move);
+
+        MoveResultDto MakeOnlineMove(
+            Guid gameId,
+            Guid playerId,
+            MoveDto move);
+
+        GameDto UndoMove(
+            Guid gameId);
+
+        IReadOnlyCollection<PositionDto> GetLegalMoves(
+            Guid gameId,
+            PositionDto positionDto);
+
+        IReadOnlyCollection<PositionDto> GetOnlineLegalMoves(
+            Guid gameId,
+            Guid playerId,
+            PositionDto positionDto);
+
+        bool DeleteGame(
+            Guid gameId);
 
         IReadOnlyCollection<GameInfoDto> GetGames();
     }
 }
+```
 
+### ChessGame.Application\Games\Player.cs
+```csharp
+namespace ChessGame.Application.Games
+{
+    public sealed class Player
+    {
+        public Guid Id { get; }
+
+        public Player(Guid id)
+        {
+            Id = id;
+        }
+    }
+}
 ```
 
 ### ChessGame.Contracts\ChessGame.Contracts.csproj
@@ -708,6 +1469,15 @@ namespace ChessGame.Contracts.Dto
 
 ```
 
+### ChessGame.Contracts\Dto\JoinGameRequest.cs
+```csharp
+namespace ChessGame.Contracts.Dto
+{
+    public sealed record JoinGameRequest(
+        Guid PlayerId);
+}
+```
+
 ### ChessGame.Contracts\Dto\MoveDto.cs
 ```csharp
 namespace ChessGame.Contracts.Dto
@@ -770,6 +1540,19 @@ namespace ChessGame.Contracts.Dto
     IReadOnlyCollection<GameEventDto> Events);
 }
 
+```
+
+### ChessGame.Contracts\Dto\OnlineGameDto.cs
+```csharp
+namespace ChessGame.Contracts.Dto
+{
+    public sealed record OnlineGameDto(
+        GameDto Game,
+        Guid PlayerId,
+        Guid? WhitePlayerId,
+        Guid? BlackPlayerId,
+        bool Ready);
+}
 ```
 
 ### ChessGame.Contracts\Dto\PieceDto.cs
@@ -3150,7 +3933,9 @@ namespace ChessGame.Server
 ```csharp
 using ChessGame.Application.Games;
 using ChessGame.Contracts.Dto;
+using ChessGame.Server.Hubs;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Swashbuckle.AspNetCore.Annotations;
 
 namespace ChessGame.Server.Controllers
@@ -3160,11 +3945,14 @@ namespace ChessGame.Server.Controllers
     public sealed class GamesController : ControllerBase
     {
         private readonly IChessGameService _gameService;
+        private readonly IHubContext<ChessGameHub> _hubContext;
 
         public GamesController(
-            IChessGameService gameService)
+            IChessGameService gameService,
+            IHubContext<ChessGameHub> hubContext)
         {
             _gameService = gameService;
+            _hubContext = hubContext;
         }
 
         // ============================================================
@@ -3206,7 +3994,8 @@ namespace ChessGame.Server.Controllers
         [SwaggerResponse(
             404,
             "Шахматная партия не найдена")]
-        public ActionResult<GameDto> Get(Guid id)
+        public ActionResult<GameDto> Get(
+            Guid id)
         {
             try
             {
@@ -3218,6 +4007,63 @@ namespace ChessGame.Server.Controllers
             catch (KeyNotFoundException)
             {
                 return NotFound();
+            }
+        }
+
+        // ============================================================
+        // GET ONLINE GAME
+        // ============================================================
+
+        [HttpGet("{id:guid}/online")]
+        [SwaggerOperation(
+            Summary = "Получает состояние online-партии",
+            Description =
+                "Возвращает текущее состояние online-партии, " +
+                "включая информацию об игроках и готовности партии.",
+            OperationId = "GetOnlineGame",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Состояние online-партии успешно получено")]
+        [SwaggerResponse(
+            400,
+            "Некорректный PlayerId")]
+        [SwaggerResponse(
+            404,
+            "Шахматная партия не найдена")]
+        public ActionResult<OnlineGameDto> GetOnline(
+            Guid id,
+            [FromQuery] Guid playerId)
+        {
+            try
+            {
+                if (playerId == Guid.Empty)
+                {
+                    return BadRequest(
+                        new
+                        {
+                            Error = "PlayerId is required."
+                        });
+                }
+
+                OnlineGameDto game =
+                    _gameService.GetOnlineGame(
+                        id,
+                        playerId);
+
+                return Ok(game);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(
+                    new
+                    {
+                        Error = ex.Message
+                    });
             }
         }
 
@@ -3277,6 +4123,80 @@ namespace ChessGame.Server.Controllers
         }
 
         // ============================================================
+        // ONLINE MOVE
+        // ============================================================
+
+        [HttpPost("{id:guid}/online-move")]
+        [SwaggerOperation(
+            Summary = "Делает ход в online-партии",
+            Description =
+                "Выполняет ход от имени указанного игрока. " +
+                "Сервер проверяет участие игрока в партии, " +
+                "цвет игрока, очередность хода и принадлежность фигуры.",
+            OperationId = "MakeOnlineMove",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Ход успешно выполнен")]
+        [SwaggerResponse(
+            400,
+            "Ход запрещен или недопустим")]
+        [SwaggerResponse(
+            404,
+            "Шахматная партия не найдена")]
+        public async Task<ActionResult<MoveResultDto>> OnlineMove(
+            Guid id,
+            [FromQuery] Guid playerId,
+            [FromBody] MoveDto move)
+        {
+            try
+            {
+                if (playerId == Guid.Empty)
+                {
+                    return BadRequest(
+                        new
+                        {
+                            Error = "PlayerId is required."
+                        });
+                }
+
+                MoveResultDto result =
+                    _gameService.MakeOnlineMove(
+                        id,
+                        playerId,
+                        move);
+
+                await _hubContext.Clients
+                    .Group($"game:{id}")
+                    .SendAsync(
+                        "GameUpdated",
+                        id);
+
+                return Ok(result);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(
+                    new
+                    {
+                        Error = ex.Message
+                    });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(
+                    new
+                    {
+                        Error = ex.Message
+                    });
+            }
+        }
+
+        // ============================================================
         // UNDO
         // ============================================================
 
@@ -3293,7 +4213,8 @@ namespace ChessGame.Server.Controllers
         [SwaggerResponse(
             404,
             "Шахматная партия не найдена")]
-        public ActionResult<GameDto> Undo(Guid id)
+        public ActionResult<GameDto> Undo(
+            Guid id)
         {
             try
             {
@@ -3361,6 +4282,78 @@ namespace ChessGame.Server.Controllers
         }
 
         // ============================================================
+        // ONLINE LEGAL MOVES
+        // ============================================================
+
+        [HttpGet("{id:guid}/online-legalmoves/{square}")]
+        [SwaggerOperation(
+            Summary = "Получает допустимые ходы игрока",
+            Description =
+                "Возвращает допустимые ходы только для фигуры указанного игрока. " +
+                "Также проверяется, является ли сейчас его очередь.",
+            OperationId = "GetOnlineLegalMoves",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Список допустимых ходов успешно получен")]
+        [SwaggerResponse(
+            400,
+            "Некорректный PlayerId или позиция")]
+        [SwaggerResponse(
+            404,
+            "Шахматная партия не найдена")]
+        public ActionResult<
+            IReadOnlyCollection<PositionDto>>
+            OnlineLegalMoves(
+                Guid id,
+                string square,
+                [FromQuery] Guid playerId)
+        {
+            try
+            {
+                if (playerId == Guid.Empty)
+                {
+                    return BadRequest(
+                        new
+                        {
+                            Error = "PlayerId is required."
+                        });
+                }
+
+                PositionDto position =
+                    ParsePosition(square);
+
+                IReadOnlyCollection<PositionDto> moves =
+                    _gameService.GetOnlineLegalMoves(
+                        id,
+                        playerId,
+                        position);
+
+                return Ok(moves);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(
+                    new
+                    {
+                        Error = ex.Message
+                    });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(
+                    new
+                    {
+                        Error = ex.Message
+                    });
+            }
+        }
+
+        // ============================================================
         // DELETE
         // ============================================================
 
@@ -3377,7 +4370,8 @@ namespace ChessGame.Server.Controllers
         [SwaggerResponse(
             404,
             "Шахматная партия не найдена")]
-        public IActionResult Delete(Guid id)
+        public IActionResult Delete(
+            Guid id)
         {
             bool removed =
                 _gameService.DeleteGame(id);
@@ -3412,6 +4406,106 @@ namespace ChessGame.Server.Controllers
                 _gameService.GetGames();
 
             return Ok(games);
+        }
+
+        // ============================================================
+        // CREATE ONLINE GAME
+        // ============================================================
+
+        [HttpPost("online")]
+        [SwaggerOperation(
+            Summary = "Создает online-партию",
+            Description =
+                "Создает новую online-шахматную партию. " +
+                "Создатель автоматически получает белые фигуры.",
+            OperationId = "CreateOnlineGame",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Online-партия успешно создана")]
+        [SwaggerResponse(
+            400,
+            "Некорректный PlayerId")]
+        public ActionResult<OnlineGameDto> CreateOnlineGame(
+            [FromQuery] Guid playerId)
+        {
+            if (playerId == Guid.Empty)
+            {
+                return BadRequest(
+                    new
+                    {
+                        Error = "PlayerId is required."
+                    });
+            }
+
+            OnlineGameDto game =
+                _gameService.CreateOnlineGame(
+                    playerId);
+
+            return Ok(game);
+        }
+
+        // ============================================================
+        // JOIN ONLINE GAME
+        // ============================================================
+
+        [HttpPost("{id:guid}/join")]
+        [SwaggerOperation(
+            Summary = "Присоединяется к online-партии",
+            Description =
+                "Присоединяет игрока к online-партии. " +
+                "Первый игрок получает белые, второй — черные.",
+            OperationId = "JoinOnlineGame",
+            Tags = new[] { "Games" })]
+        [SwaggerResponse(
+            200,
+            "Игрок успешно присоединился")]
+        [SwaggerResponse(
+            400,
+            "Игрок не может присоединиться")]
+        [SwaggerResponse(
+            404,
+            "Партия не найдена")]
+        public async Task<ActionResult<OnlineGameDto>> Join(
+            Guid id,
+            [FromBody] JoinGameRequest request)
+        {
+            try
+            {
+                if (request.PlayerId == Guid.Empty)
+                {
+                    return BadRequest(
+                        new
+                        {
+                            Error = "PlayerId is required."
+                        });
+                }
+
+                OnlineGameDto game =
+                    _gameService.JoinGame(
+                        id,
+                        request.PlayerId);
+
+                await _hubContext.Clients
+                    .Group($"game:{id}")
+                    .SendAsync(
+                        "GameUpdated",
+                        id);
+
+                return Ok(game);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(
+                    new
+                    {
+                        Error = ex.Message
+                    });
+            }
         }
 
         // ============================================================
@@ -3461,12 +4555,45 @@ namespace ChessGame.Server.Controllers
         }
     }
 }
+
+```
+
+### ChessGame.Server\Hubs\ChessGameHub.cs
+```csharp
+using Microsoft.AspNetCore.SignalR;
+
+namespace ChessGame.Server.Hubs
+{
+    public sealed class ChessGameHub : Hub
+    {
+        public async Task JoinGame(Guid gameId)
+        {
+            await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            GetGroupName(gameId));
+        }
+    public async Task LeaveGame(Guid gameId)
+        {
+            await Groups.RemoveFromGroupAsync(
+                Context.ConnectionId,
+                GetGroupName(gameId));
+        }
+
+        private static string GetGroupName(
+            Guid gameId)
+        {
+            return $"game:{gameId}";
+        }
+    }
+}
+
 ```
 
 ### ChessGame.Server\Program.cs
 ```csharp
 using ChessGame.Application.Games;
 using System.Text.Json.Serialization;
+using ChessGame.Server.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -3515,6 +4642,8 @@ builder.Services.AddSingleton<
     IChessGameService,
     ChessGameService>();
 
+builder.Services.AddSignalR();
+
 var app = builder.Build();
 
 // ============================================================
@@ -3533,6 +4662,8 @@ app.UseHttpsRedirection();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.MapHub<ChessGameHub>("/hubs/chess");
 
 app.Run();
 
@@ -3736,6 +4867,10 @@ EndGlobal
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\ChessGame.ApiClient\ChessGame.ApiClient.csproj" />
     <ProjectReference Include="..\ChessGame.Contracts\ChessGame.Contracts.csproj" />
   </ItemGroup>
@@ -3796,7 +4931,6 @@ EndGlobal
 @inject IChessGameApiClient ChessGameApiClient
 
 <div class="chess-board">
-
     @for (int displayRow = 7; displayRow >= 0; displayRow--)
     {
         int row = displayRow;
@@ -3902,7 +5036,7 @@ EndGlobal
     [Parameter]
     public GameDto? Game { get; set; }
 
-    [Parameter]
+[Parameter]
     public EventCallback<MoveResultDto> OnMoveCompleted { get; set; }
 
     private PositionDto? _selectedPosition;
@@ -3914,7 +5048,27 @@ EndGlobal
 
 
     // ============================================================
-    // ОБНОВЛЕНИЕ СОСТОЯНИЯ КОМПОНЕНТА
+    // Режим игры
+    // ============================================================
+
+    private bool IsOnlineGame =>
+        ChessGameApiClient.IsOnlineGame;
+
+
+    private bool IsOnlineGameReady =>
+        ChessGameApiClient.IsOnlineGameReady;
+
+
+    private bool CanMoveOnline =>
+        IsOnlineGame &&
+        IsOnlineGameReady &&
+        ChessGameApiClient.PlayerId.HasValue &&
+        !string.IsNullOrWhiteSpace(
+            ChessGameApiClient.PlayerColor);
+
+
+    // ============================================================
+    // Обновление состояния компонента
     // ============================================================
 
     protected override void OnParametersSet()
@@ -3955,8 +5109,25 @@ EndGlobal
         if (game is null)
             return;
 
+        if (game.Finished)
+            return;
+
         PieceDto? piece =
             GetPiece(position);
+
+
+        // --------------------------------------------------------
+        // Online PvP
+        // --------------------------------------------------------
+
+        if (IsOnlineGame)
+        {
+            if (!CanMoveOnline)
+                return;
+
+            if (!IsMyTurn())
+                return;
+        }
 
 
         // --------------------------------------------------------
@@ -4040,7 +5211,7 @@ EndGlobal
         // --------------------------------------------------------
 
         if (piece is not null &&
-            piece.Color == game.CurrentTurn)
+            IsMyPiece(piece))
         {
             await SelectPiece(
                 position,
@@ -4073,7 +5244,8 @@ EndGlobal
             $"SelectPiece: {ToSquare(position)}, " +
             $"piece: {piece?.Type}, " +
             $"color: {piece?.Color}, " +
-            $"current turn: {Game?.CurrentTurn}");
+            $"current turn: {Game?.CurrentTurn}, " +
+            $"online: {IsOnlineGame}");
 
         GameDto? game =
             Game;
@@ -4084,14 +5256,41 @@ EndGlobal
         if (piece is null)
             return;
 
-        if (piece.Color != game.CurrentTurn)
+        if (!IsMyPiece(piece))
             return;
 
         try
         {
-            IReadOnlyCollection<PositionDto> legalMoves =
-                await ChessGameApiClient.GetLegalMovesAsync(
-                    position);
+            IReadOnlyCollection<PositionDto> legalMoves;
+
+            // ----------------------------------------------------
+            // Online PvP
+            // ----------------------------------------------------
+
+            if (IsOnlineGame)
+            {
+                if (!CanMoveOnline)
+                    return;
+
+                if (!IsMyTurn())
+                    return;
+
+                legalMoves =
+                    await ChessGameApiClient
+                        .GetOnlineLegalMovesAsync(
+                            position);
+            }
+            else
+            {
+                // ------------------------------------------------
+                // Локальная игра
+                // ------------------------------------------------
+
+                legalMoves =
+                    await ChessGameApiClient
+                        .GetLegalMovesAsync(
+                            position);
+            }
 
             _selectedPosition =
                 position;
@@ -4137,9 +5336,50 @@ EndGlobal
     {
         try
         {
-            MoveResultDto result =
-                await ChessGameApiClient.MoveAsync(
-                    move);
+            MoveResultDto result;
+
+            // ----------------------------------------------------
+            // Online PvP
+            // ----------------------------------------------------
+
+            if (IsOnlineGame)
+            {
+                if (!CanMoveOnline)
+                {
+                    ClearSelection();
+
+                    await InvokeAsync(
+                        StateHasChanged);
+
+                    return;
+                }
+
+                if (!IsMyTurn())
+                {
+                    ClearSelection();
+
+                    await InvokeAsync(
+                        StateHasChanged);
+
+                    return;
+                }
+
+                result =
+                    await ChessGameApiClient
+                        .OnlineMoveAsync(
+                            move);
+            }
+            else
+            {
+                // ------------------------------------------------
+                // Локальная игра
+                // ------------------------------------------------
+
+                result =
+                    await ChessGameApiClient
+                        .MoveAsync(
+                            move);
+            }
 
             ClearSelection();
 
@@ -4200,6 +5440,70 @@ EndGlobal
         return piece.Color == "White"
             ? destination.Row == 7
             : destination.Row == 0;
+    }
+
+
+    // ============================================================
+    // Проверка: моя ли фигура
+    // ============================================================
+
+    private bool IsMyPiece(
+        PieceDto piece)
+    {
+        if (Game is null)
+            return false;
+
+        // --------------------------------------------------------
+        // Локальная игра
+        // --------------------------------------------------------
+
+        if (!IsOnlineGame)
+        {
+            return piece.Color ==
+                   Game.CurrentTurn;
+        }
+
+        // --------------------------------------------------------
+        // Online PvP
+        // --------------------------------------------------------
+
+        string? playerColor =
+            ChessGameApiClient.PlayerColor;
+
+        if (string.IsNullOrWhiteSpace(
+                playerColor))
+        {
+            return false;
+        }
+
+        return piece.Color ==
+               playerColor;
+    }
+
+
+    // ============================================================
+    // Проверка: мой ли сейчас ход
+    // ============================================================
+
+    private bool IsMyTurn()
+    {
+        if (Game is null)
+            return false;
+
+        if (!IsOnlineGame)
+            return true;
+
+        string? playerColor =
+            ChessGameApiClient.PlayerColor;
+
+        if (string.IsNullOrWhiteSpace(
+                playerColor))
+        {
+            return false;
+        }
+
+        return Game.CurrentTurn ==
+               playerColor;
     }
 
 
@@ -4388,8 +5692,8 @@ EndGlobal
 
         return $"{file}{rank}";
     }
-
 }
+
 ```
 
 ### ChessGame.Web\Components\Layout\MainLayout.razor
@@ -4455,12 +5759,98 @@ EndGlobal
 @using ChessGame.Contracts.Dto
 @using ChessGame.Web.Components
 @using ChessGame.ApiClient.Services
+@using Microsoft.AspNetCore.SignalR.Client
 
 @inject IChessGameApiClient ChessGameApiClient
+
+@implements IAsyncDisposable
 
 <div class="game-page">
 
     <h1>Chess</h1>
+
+    <div class="game-mode-panel">
+
+        <h2>Game mode</h2>
+
+        <div class="game-mode-buttons">
+
+            <button class="game-mode-button"
+                    @onclick="StartLocalGame">
+                Local Game
+            </button>
+
+            <button class="game-mode-button"
+                    @onclick="CreateOnlineGame">
+                Create Online Game
+            </button>
+
+        </div>
+
+        @if (ChessGameApiClient.IsOnlineGame)
+        {
+            <div class="online-game-panel">
+
+                <h3>Online Game</h3>
+
+                <div class="online-game-info">
+
+                    <div class="info-row">
+                        <span class="info-label">Game ID</span>
+                        <span class="info-value">
+                            @ChessGameApiClient.GameId
+                        </span>
+                    </div>
+
+                    <div class="info-row">
+                        <span class="info-label">Player ID</span>
+                        <span class="info-value">
+                            @ChessGameApiClient.PlayerId
+                        </span>
+                    </div>
+
+                    <div class="info-row">
+                        <span class="info-label">Color</span>
+                        <span class="info-value">
+                            @ChessGameApiClient.PlayerColor
+                        </span>
+                    </div>
+
+                    <div class="info-row">
+                        <span class="info-label">Status</span>
+                        <span class="info-value">
+                            @GetOnlineStatus()
+                        </span>
+                    </div>
+
+                    <div class="info-row">
+                        <span class="info-label">SignalR</span>
+                        <span class="info-value">
+                            @GetSignalRStatus()
+                        </span>
+                    </div>
+
+                </div>
+
+                <div class="join-game-panel">
+
+                    <input @bind="_joinGameId"
+                           placeholder="Game ID" />
+
+                    <input @bind="_joinPlayerId"
+                           placeholder="Player ID" />
+
+                    <button class="join-game-button"
+                            @onclick="JoinOnlineGame">
+                        Join Game
+                    </button>
+
+                </div>
+
+            </div>
+        }
+
+    </div>
 
     <div class="game-layout">
 
@@ -4480,28 +5870,37 @@ EndGlobal
                 <div class="game-info">
 
                     <div class="info-row">
-
-                        <span class="info-label">
-                            Move
-                        </span>
-
+                        <span class="info-label">Move</span>
                         <span class="info-value">
                             @ChessGameApiClient.Game.CurrentTurn
                         </span>
-
                     </div>
 
                     <div class="info-row">
-
-                        <span class="info-label">
-                            State
-                        </span>
-
+                        <span class="info-label">State</span>
                         <span class="info-value">
                             @ChessGameApiClient.Game.State
                         </span>
-
                     </div>
+
+                    @if (ChessGameApiClient.IsOnlineGame)
+                    {
+                        <div class="info-row">
+                            <span class="info-label">Player</span>
+                            <span class="info-value">
+                                @ChessGameApiClient.PlayerColor
+                            </span>
+                        </div>
+
+                        <div class="info-row">
+                            <span class="info-label">Turn</span>
+                            <span class="info-value">
+                                @(IsMyTurn()
+                                    ? "Your turn"
+                                    : "Opponent's turn")
+                            </span>
+                        </div>
+                    }
 
                 </div>
 
@@ -4557,7 +5956,8 @@ EndGlobal
                                     @whiteMove.San
                                 </span>
 
-                                @if (index + 1 < ChessGameApiClient.Game.Moves.Count)
+                                @if (index + 1 <
+                               ChessGameApiClient.Game.Moves.Count)
                                 {
                                     MoveRecordDto blackMove =
                                     ChessGameApiClient.Game.Moves.ElementAt(index + 1);
@@ -4581,18 +5981,15 @@ EndGlobal
             }
 
             <button class="new-game-button"
-                    @onclick="NewGame">
-
+                    @onclick="StartLocalGame">
                 New Game
-
             </button>
 
             <button class="undo-button"
                     @onclick="Undo"
-                    disabled="@(ChessGameApiClient.Game?.Moves.Count == 0)">
-
+                    disabled="@(ChessGameApiClient.IsOnlineGame ||
+                                ChessGameApiClient.Game?.Moves.Count == 0)">
                 ↶ Undo move
-
             </button>
 
         </div>
@@ -4604,11 +6001,19 @@ EndGlobal
 @code
 {
     private IReadOnlyCollection<GameEventDto> _lastEvents =
-    Array.Empty<GameEventDto>();
+        Array.Empty<GameEventDto>();
 
-    // ============================================================
-    // INITIALIZATION
-    // ============================================================
+    private string _joinGameId =
+        string.Empty;
+
+    private string _joinPlayerId =
+        string.Empty;
+
+    private HubConnection? _hubConnection;
+
+    private Guid? _signalRGameId;
+
+    private bool _disposed;
 
     protected override async Task OnInitializedAsync()
     {
@@ -4618,53 +6023,63 @@ EndGlobal
         }
     }
 
-
     // ============================================================
-    // NEW GAME
+    // LOCAL GAME
     // ============================================================
 
-    private async Task NewGame()
+    private async Task StartLocalGame()
     {
-        await ChessGameApiClient.NewGameAsync();
-
-        _lastEvents =
-            Array.Empty<GameEventDto>();
-
-        await InvokeAsync(
-            StateHasChanged);
-    }
-
-
-    // ============================================================
-    // UNDO
-    // ============================================================
-
-    private async Task Undo()
-    {
-        Console.WriteLine("=== UNDO BUTTON CLICKED ===");
-
-        if (ChessGameApiClient.Game == null)
-        {
-            Console.WriteLine("UNDO: Game == null");
-            return;
-        }
-
-        Console.WriteLine(
-            $"UNDO: GameId = {ChessGameApiClient.GameId}");
-
-        Console.WriteLine(
-            $"UNDO: Moves before = {ChessGameApiClient.Game.Moves.Count}");
-
         try
         {
-            GameDto game =
-                await ChessGameApiClient.UndoAsync();
+            await DisconnectSignalRAsync();
 
-            Console.WriteLine(
-                $"UNDO: Moves after = {game.Moves.Count}");
+            await ChessGameApiClient.NewGameAsync();
 
-            Console.WriteLine(
-                $"UNDO: CurrentTurn = {game.CurrentTurn}");
+            _joinGameId =
+                string.Empty;
+
+            _joinPlayerId =
+                string.Empty;
+
+            _lastEvents =
+                Array.Empty<GameEventDto>();
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+
+            _lastEvents =
+                new[]
+                {
+                    new GameEventDto(
+                        "Error",
+                        $"New game error: {ex.Message}")
+                    };
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+    }
+
+    // ============================================================
+    // CREATE ONLINE GAME
+    // ============================================================
+
+    private async Task CreateOnlineGame()
+    {
+        try
+        {
+            await DisconnectSignalRAsync();
+
+            Guid playerId =
+                Guid.NewGuid();
+
+            await ChessGameApiClient
+                .CreateOnlineGameAsync(
+                    playerId);
 
             _lastEvents =
                 Array.Empty<GameEventDto>();
@@ -4672,26 +6087,226 @@ EndGlobal
             await InvokeAsync(
                 StateHasChanged);
 
-            Console.WriteLine("=== UNDO COMPLETED ===");
+            if (ChessGameApiClient.GameId is Guid gameId)
+            {
+                await ConnectToGameSignalRAsync(
+                    gameId);
+            }
         }
         catch (Exception ex)
         {
-            Console.WriteLine("=== UNDO ERROR ===");
             Console.WriteLine(ex);
 
             _lastEvents =
                 new[]
                 {
-                new GameEventDto(
-                    "Error",
-                    $"Undo error: {ex.Message}")
-                        };
+                    new GameEventDto(
+                        "Error",
+                        $"Create online game error: {ex.Message}")
+                    };
 
             await InvokeAsync(
                 StateHasChanged);
         }
     }
 
+    // ============================================================
+    // JOIN ONLINE GAME
+    // ============================================================
+
+    private async Task JoinOnlineGame()
+    {
+        if (!Guid.TryParse(
+                _joinGameId,
+                out Guid gameId))
+        {
+            ShowError(
+                "Invalid Game ID.");
+
+            return;
+        }
+
+        if (!Guid.TryParse(
+                _joinPlayerId,
+                out Guid playerId))
+        {
+            ShowError(
+                "Invalid Player ID.");
+
+            return;
+        }
+
+        try
+        {
+            await DisconnectSignalRAsync();
+
+            await ChessGameApiClient
+                .JoinOnlineGameAsync(
+                    gameId,
+                    playerId);
+
+            _lastEvents =
+                Array.Empty<GameEventDto>();
+
+            await InvokeAsync(
+                StateHasChanged);
+
+            await ConnectToGameSignalRAsync(
+                gameId);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+
+            ShowError(
+                $"Join game error: {ex.Message}");
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+    }
+
+    // ============================================================
+    // ONLINE STATUS
+    // ============================================================
+
+    private string GetOnlineStatus()
+    {
+        if (!ChessGameApiClient.IsOnlineGame)
+        {
+            return "Local";
+        }
+
+        if (!ChessGameApiClient.IsOnlineGameReady)
+        {
+            return "Waiting for opponent";
+        }
+
+        if (ChessGameApiClient.Game?.Finished == true)
+        {
+            return "Finished";
+        }
+
+        return "Playing";
+    }
+
+    private bool IsMyTurn()
+    {
+        if (!ChessGameApiClient.IsOnlineGame)
+        {
+            return true;
+        }
+
+        if (!ChessGameApiClient.IsOnlineGameReady)
+        {
+            return false;
+        }
+
+        if (ChessGameApiClient.Game == null)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(
+                ChessGameApiClient.PlayerColor))
+        {
+            return false;
+        }
+
+        return ChessGameApiClient.Game.CurrentTurn ==
+               ChessGameApiClient.PlayerColor;
+    }
+
+    // ============================================================
+    // ERROR
+    // ============================================================
+
+    private void ShowError(
+        string message)
+    {
+        _lastEvents =
+            new[]
+            {
+                new GameEventDto(
+                    "Error",
+                    message)
+                };
+    }
+
+    // ============================================================
+    // UNDO
+    // ============================================================
+
+    private async Task Undo()
+    {
+        Console.WriteLine(
+            "=== UNDO BUTTON CLICKED ===");
+
+        if (ChessGameApiClient.Game == null)
+        {
+            Console.WriteLine(
+                "UNDO: Game == null");
+
+            return;
+        }
+
+        if (ChessGameApiClient.IsOnlineGame)
+        {
+            Console.WriteLine(
+                "UNDO: Disabled for online game.");
+
+            return;
+        }
+
+        Console.WriteLine(
+            $"UNDO: GameId = " +
+            $"{ChessGameApiClient.GameId}");
+
+        Console.WriteLine(
+            $"UNDO: Moves before = " +
+            $"{ChessGameApiClient.Game.Moves.Count}");
+
+        try
+        {
+            GameDto game =
+                await ChessGameApiClient.UndoAsync();
+
+            Console.WriteLine(
+                $"UNDO: Moves after = " +
+                $"{game.Moves.Count}");
+
+            Console.WriteLine(
+                $"UNDO: CurrentTurn = " +
+                $"{game.CurrentTurn}");
+
+            _lastEvents =
+                Array.Empty<GameEventDto>();
+
+            await InvokeAsync(
+                StateHasChanged);
+
+            Console.WriteLine(
+                "=== UNDO COMPLETED ===");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                "=== UNDO ERROR ===");
+
+            Console.WriteLine(ex);
+
+            _lastEvents =
+                new[]
+                {
+                    new GameEventDto(
+                        "Error",
+                        $"Undo error: {ex.Message}")
+                    };
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+    }
 
     // ============================================================
     // MOVE COMPLETED
@@ -4707,9 +6322,256 @@ EndGlobal
             StateHasChanged);
     }
 
+    // ============================================================
+    // SIGNALR
+    // ============================================================
+
+    private async Task ConnectToGameSignalRAsync(
+        Guid gameId)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (_hubConnection != null &&
+            _signalRGameId == gameId)
+        {
+            if (_hubConnection.State ==
+                HubConnectionState.Connected)
+            {
+                return;
+            }
+        }
+
+        await DisconnectSignalRAsync();
+
+        string hubUrl =
+            "https://localhost:7059/hubs/chess";
+
+        Console.WriteLine(
+            $"SIGNALR: Connecting to {hubUrl}");
+
+        _hubConnection =
+            new HubConnectionBuilder()
+                .WithUrl(hubUrl)
+                .WithAutomaticReconnect()
+                .Build();
+
+        _hubConnection.On<Guid>(
+            "GameUpdated",
+            async updatedGameId =>
+            {
+                Console.WriteLine(
+                    $"SIGNALR: GameUpdated received: " +
+                    $"{updatedGameId}");
+
+                if (_disposed)
+                {
+                    return;
+                }
+
+                if (updatedGameId != gameId)
+                {
+                    return;
+                }
+
+                try
+                {
+                    if (ChessGameApiClient.IsOnlineGame)
+                    {
+                        await ChessGameApiClient
+                            .LoadOnlineGameAsync();
+
+                        Console.WriteLine(
+                            "SIGNALR: Online game reloaded.");
+                    }
+                    else
+                    {
+                        await ChessGameApiClient
+                            .LoadGameAsync(
+                                updatedGameId);
+
+                        Console.WriteLine(
+                            "SIGNALR: Game reloaded.");
+                    }
+
+                    await InvokeAsync(
+                        StateHasChanged);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        $"SIGNALR: Refresh error: {ex}");
+                }
+            });
+
+        _hubConnection.Reconnecting +=
+            error =>
+            {
+                Console.WriteLine(
+                    $"SIGNALR: Reconnecting. " +
+                    $"{error?.Message}");
+
+                return Task.CompletedTask;
+            };
+
+        _hubConnection.Reconnected +=
+            async connectionId =>
+            {
+                Console.WriteLine(
+                    $"SIGNALR: Reconnected. " +
+                    $"ConnectionId = {connectionId}");
+
+                try
+                {
+                    await _hubConnection
+                        .InvokeAsync(
+                            "JoinGame",
+                            gameId);
+
+                    Console.WriteLine(
+                        $"SIGNALR: Rejoined game {gameId}");
+
+                    if (ChessGameApiClient.IsOnlineGame)
+                    {
+                        await ChessGameApiClient
+                            .LoadOnlineGameAsync();
+
+                        await InvokeAsync(
+                            StateHasChanged);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        $"SIGNALR: Rejoin error: {ex}");
+                }
+            };
+
+        _hubConnection.Closed +=
+            error =>
+            {
+                Console.WriteLine(
+                    $"SIGNALR: Connection closed. " +
+                    $"{error?.Message}");
+
+                return Task.CompletedTask;
+            };
+
+        try
+        {
+            await _hubConnection.StartAsync();
+
+            Console.WriteLine(
+                "SIGNALR: Connected.");
+
+            await _hubConnection.InvokeAsync(
+                "JoinGame",
+                gameId);
+
+            Console.WriteLine(
+                $"SIGNALR: Joined game group " +
+                $"game:{gameId}");
+
+            _signalRGameId =
+                gameId;
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"SIGNALR: Connection error: {ex}");
+
+            await DisconnectSignalRAsync();
+
+            _lastEvents =
+                new[]
+                {
+                    new GameEventDto(
+                        "Error",
+                        $"SignalR connection error: {ex.Message}")
+                    };
+
+            await InvokeAsync(
+                StateHasChanged);
+        }
+    }
+
+    private async Task DisconnectSignalRAsync()
+    {
+        if (_hubConnection == null)
+        {
+            _signalRGameId = null;
+            return;
+        }
+
+        try
+        {
+            if (_signalRGameId is Guid gameId &&
+                _hubConnection.State ==
+                HubConnectionState.Connected)
+            {
+                try
+                {
+                    await _hubConnection.InvokeAsync(
+                        "LeaveGame",
+                        gameId);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        $"SIGNALR: LeaveGame error: " +
+                        $"{ex.Message}");
+                }
+            }
+
+            await _hubConnection.StopAsync();
+
+            await _hubConnection.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"SIGNALR: Disconnect error: {ex.Message}");
+        }
+        finally
+        {
+            _hubConnection = null;
+            _signalRGameId = null;
+        }
+    }
+
+    private string GetSignalRStatus()
+    {
+        if (_hubConnection == null)
+        {
+            return "Disconnected";
+        }
+
+        return _hubConnection.State switch
+        {
+            HubConnectionState.Connected =>
+                "Connected",
+
+            HubConnectionState.Connecting =>
+                "Connecting",
+
+            HubConnectionState.Reconnecting =>
+                "Reconnecting",
+
+            HubConnectionState.Disconnected =>
+                "Disconnected",
+
+            _ =>
+                _hubConnection.State.ToString()
+        };
+    }
 
     // ============================================================
-    // EVENT TITLE
+    // EVENTS
     // ============================================================
 
     private static string GetEventTitle(
@@ -4741,15 +6603,13 @@ EndGlobal
             "Draw" =>
                 "Draw",
 
+            "Error" =>
+                "Error",
+
             _ =>
                 "Game Event"
         };
     }
-
-
-    // ============================================================
-    // EVENT CSS
-    // ============================================================
 
     private static string GetEventCssClass(
         string eventType)
@@ -4780,9 +6640,28 @@ EndGlobal
             "Draw" =>
                 "game-event event-draw",
 
+            "Error" =>
+                "game-event event-checkmate",
+
             _ =>
                 "game-event"
         };
+    }
+
+    // ============================================================
+    // DISPOSE
+    // ============================================================
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        await DisconnectSignalRAsync();
     }
 }
 ```
